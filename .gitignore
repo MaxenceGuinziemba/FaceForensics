@@ -1,0 +1,30 @@
+# Dataset (téléchargé via scripts/download_dataset.py)
+/data/
+
+# Modèles sauvegardés
+checkpoints/
+
+# Logs d'entraînement
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Environnement virtuel
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PyTorch
+*.pth
+*.pt

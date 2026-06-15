@@ -1,0 +1,21 @@
+# Core - deep learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Images & vidéos
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Calcul
+numpy>=1.24.0
+
+# Détection de visages
+dlib>=19.24.0
+
+# Évaluation & visualisation
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+tensorboard>=2.13.0
+
+# Utilitaires
+tqdm>=4.65.0
