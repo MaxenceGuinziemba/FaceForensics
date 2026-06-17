@@ -9,9 +9,6 @@ Pillow>=10.0.0
 # Calcul
 numpy>=1.24.0
 
-# Détection de visages
-dlib>=19.24.0
-
 # Évaluation & visualisation
 scikit-learn>=1.3.0
 matplotlib>=3.7.0
