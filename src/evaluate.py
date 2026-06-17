@@ -106,6 +106,105 @@ def plot_roc_curve(labels, probs, output_path):
     plt.close()
 
 
+def plot_roc_per_method(per_method_data, output_path):
+    """Courbes ROC superposées pour chaque méthode de manipulation."""
+    colors = {'Deepfakes': '#e74c3c', 'Face2Face': '#3498db',
+              'FaceSwap': '#2ecc71', 'NeuralTextures': '#9b59b6'}
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+
+    for method, data in per_method_data.items():
+        if 'labels' not in data or len(np.unique(data['labels'])) < 2:
+            continue
+        fpr, tpr, _ = roc_curve(data['labels'], data['probs'])
+        auc = roc_auc_score(data['labels'], data['probs'])
+        color = colors.get(method, None)
+        ax.plot(fpr, tpr, label=f'{method} (AUC={auc:.3f})', color=color)
+
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Aléatoire')
+    ax.set_xlabel('Taux de faux positifs')
+    ax.set_ylabel('Taux de vrais positifs')
+    ax.set_title('Courbes ROC par méthode de manipulation')
+    ax.legend(loc='lower right')
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+
+
+def plot_example_predictions(model, loader, device, output_path):
+    """Grille d'exemples : vrais/faux positifs et négatifs avec probabilité."""
+    model.eval()
+    softmax = nn.Softmax(dim=1)
+    label_names = ['Real', 'Fake']
+
+    categories = {'TP': [], 'TN': [], 'FP': [], 'FN': []}
+    max_per_cat = 2
+
+    with torch.no_grad():
+        for frames, labels in loader:
+            frames_dev = frames.to(device)
+            outputs = model(frames_dev)
+            probs = softmax(outputs)
+            _, preds = torch.max(outputs, 1)
+
+            for i in range(frames.size(0)):
+                true_l = labels[i].item()
+                pred_l = preds[i].item()
+                prob = probs[i, pred_l].item()
+                img = frames[i]
+
+                if true_l == 1 and pred_l == 1:
+                    cat = 'TP'
+                elif true_l == 0 and pred_l == 0:
+                    cat = 'TN'
+                elif true_l == 0 and pred_l == 1:
+                    cat = 'FP'
+                else:
+                    cat = 'FN'
+
+                if len(categories[cat]) < max_per_cat:
+                    categories[cat].append((img, true_l, pred_l, prob))
+
+            if all(len(v) >= max_per_cat for v in categories.values()):
+                break
+
+    all_examples = []
+    titles = []
+    cat_labels = {'TP': 'Vrai Positif', 'TN': 'Vrai Négatif',
+                  'FP': 'Faux Positif', 'FN': 'Faux Négatif'}
+    for cat in ['TN', 'TP', 'FN', 'FP']:
+        for img, true_l, pred_l, prob in categories[cat]:
+            all_examples.append(img)
+            titles.append(f'{cat_labels[cat]}\n{label_names[true_l]}→{label_names[pred_l]} ({prob:.2f})')
+
+    if not all_examples:
+        return
+
+    n = len(all_examples)
+    cols = min(n, 4)
+    rows = (n + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4.5 * rows))
+    if rows == 1 and cols == 1:
+        axes = np.array([axes])
+    axes = np.array(axes).flatten()
+
+    for i, (img, title) in enumerate(zip(all_examples, titles)):
+        img_np = img.cpu().numpy().transpose(1, 2, 0)
+        img_np = img_np * 0.5 + 0.5
+        img_np = np.clip(img_np, 0, 1)
+        axes[i].imshow(img_np)
+        axes[i].set_title(title, fontsize=10)
+        axes[i].axis('off')
+
+    for i in range(n, len(axes)):
+        axes[i].axis('off')
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+
+
 def evaluate_per_method(model, data_root, split_path, compression,
                         transform, device, num_frames, batch_size):
     """
@@ -146,6 +245,8 @@ def evaluate_per_method(model, data_root, split_path, compression,
             'recall': recall_score(labels, preds, zero_division=0),
             'f1': f1_score(labels, preds, zero_division=0),
             'auc': roc_auc_score(labels, probs),
+            'labels': labels,
+            'probs': probs,
         }
 
     return results
@@ -261,6 +362,10 @@ def main(args):
         plot_roc_curve(labels, probs, roc_path)
         print(f'Courbe ROC sauvegardée: {roc_path}')
 
+    examples_path = join(args.output_dir, 'example_predictions.png')
+    plot_example_predictions(model, loader, device, examples_path)
+    print(f'Exemples de prédictions sauvegardés: {examples_path}')
+
     # ---------------------------------------------------------------
     # Évaluation par méthode
     # ---------------------------------------------------------------
@@ -284,14 +389,26 @@ def main(args):
             print(f'  {method:16s}: {metrics.get("status", "inconnu")}')
 
     # ---------------------------------------------------------------
+    # Courbes ROC par méthode
+    # ---------------------------------------------------------------
+    roc_methods_path = join(args.output_dir, 'roc_curves_per_method.png')
+    plot_roc_per_method(per_method, roc_methods_path)
+    print(f'Courbes ROC par méthode sauvegardées: {roc_methods_path}')
+
+    # ---------------------------------------------------------------
     # Sauvegarder le rapport complet en JSON
     # ---------------------------------------------------------------
+    report_per_method = {}
+    for method, metrics in per_method.items():
+        report_per_method[method] = {k: v for k, v in metrics.items()
+                                      if k not in ('labels', 'probs')}
+
     report = {
         'checkpoint': args.checkpoint,
         'compression': args.compression,
         'num_samples': len(labels),
         'global_metrics': results,
-        'per_method': per_method,
+        'per_method': report_per_method,
         'confusion_matrix': cm.tolist(),
     }
 

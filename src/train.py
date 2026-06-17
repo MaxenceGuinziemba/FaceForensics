@@ -14,12 +14,40 @@ from os.path import join
 
 import torch
 import torch.nn as nn
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from src.models import model_selection
 from src.data import FaceForensicsDataset, xception_default_data_transforms
+
+
+def plot_training_curves(train_losses, val_losses, train_accs, val_accs, output_path):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    epochs = range(1, len(train_losses) + 1)
+
+    ax1.plot(epochs, train_losses, 'b-', label='Train')
+    ax1.plot(epochs, val_losses, 'r-', label='Validation')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Loss par epoch')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(epochs, train_accs, 'b-', label='Train')
+    ax2.plot(epochs, val_accs, 'r-', label='Validation')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy')
+    ax2.set_title('Accuracy par epoch')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
@@ -169,6 +197,7 @@ def main(args):
 
     best_val_acc = 0.0
     epochs_without_improvement = 0
+    history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
 
     print(f'\nDémarrage: {args.epochs} epochs, batch_size={args.batch_size}, lr={args.lr}')
     print('-' * 60)
@@ -186,6 +215,11 @@ def main(args):
 
         # Scheduler : ajuste le lr en fonction de la val loss
         scheduler.step(val_loss)
+
+        history['train_loss'].append(train_loss)
+        history['val_loss'].append(val_loss)
+        history['train_acc'].append(train_acc)
+        history['val_acc'].append(val_acc)
 
         elapsed = time.time() - start_time
         current_lr = optimizer.param_groups[0]['lr']
@@ -225,7 +259,15 @@ def main(args):
             break
 
     writer.close()
-    print(f'\nTerminé. Meilleure val accuracy: {best_val_acc:.4f}')
+
+    curves_path = join(args.checkpoint_dir, 'training_curves.png')
+    plot_training_curves(
+        history['train_loss'], history['val_loss'],
+        history['train_acc'], history['val_acc'],
+        curves_path,
+    )
+    print(f'\nCourbes d\'entraînement sauvegardées: {curves_path}')
+    print(f'Meilleure val accuracy: {best_val_acc:.4f}')
     print(f'Modèle sauvegardé dans: {args.checkpoint_dir}/best_model.pth')
 
 
