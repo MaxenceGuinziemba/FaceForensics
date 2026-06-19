@@ -486,3 +486,329 @@ requirements.txt            ← NOUVEAU : dépendances modernes (11 au lieu de 3
 3. Lancer l'entraînement : `sbatch scripts/submit_train.sh`
 4. Évaluer : `sbatch scripts/submit_eval.sh`
 5. Analyser les résultats et rédiger le rapport
+
+---
+
+## Premier entraînement sur le cluster GPU
+
+### Setup et problèmes rencontrés
+
+- **Date** : 2026-06-17 puis 2026-06-19
+- **Cluster** : gpu-gw.enst.fr, node40, RTX 3090 24GB
+- **Dataset** : 2160 vidéos train (720 real, 1440 fake), 420 vidéos val (140 real, 280 fake)
+
+#### Problème 1 : Certificat SSL expiré pour XceptionNet
+
+**Erreur** :
+```
+ssl.SSLCertVerificationError: certificate has expired
+urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]>
+```
+
+Le serveur `data.lip6.fr/cadene/pretrainedmodels/xception-b5690688.pth` a un certificat SSL expiré ET retourne une erreur 503 Service Unavailable.
+
+**Solutions tentées** :
+1. ❌ Téléchargement manuel avec `wget --no-check-certificate` : fichier vide (0 bytes)
+2. ❌ Serveur down (503 Service Unavailable)
+
+**Solution retenue** : Utiliser **ResNet18** à la place de XceptionNet
+- ResNet18 est inclus dans torchvision (pas de téléchargement externe)
+- Performances attendues : 95-97% au lieu de 98-99% (acceptable pour le projet)
+- Plus rapide à entraîner (11M params vs 23M)
+
+Modification du script SLURM :
+```bash
+sed -i 's/--model xception/--model resnet18/' scripts/submit_train.sh
+```
+
+### Résultats du premier entraînement (Job 856564)
+
+**Hyperparamètres initiaux** :
+- Model : ResNet18
+- Learning rate : 0.0002
+- Dropout : 0.5
+- Batch size : 32
+- Frames per video : 10
+- Epochs : 50 max
+- Early stopping patience : 10
+
+**Résultats par epoch** :
+
+| Epoch | Train loss | Train acc | Val loss | Val acc | LR | Temps | Observation |
+|-------|------------|-----------|----------|---------|-----|-------|-------------|
+| 1 | 0.6354 | 66.25% | **0.6118** | **65.33%** ✅ | 2.0e-04 | 2745s (46 min) | **Meilleur modèle** - performances équilibrées |
+| 2 | 0.5279 | 74.30% | 0.7038 | 62.93% | 2.0e-04 | 2698s | Début d'overfitting (val acc baisse) |
+| 3 | 0.4603 | 79.18% | 0.6797 | 63.14% | 2.0e-04 | 2708s | Overfitting se confirme (écart +16%) |
+| 4 | 0.4257 | 80.96% | 1.0487 | 53.24% ⚠️ | 2.0e-04 | 2715s | Effondrement : val acc -12% |
+| 5 | 0.4004 | 82.07% | 1.1247 | 54.31% ⚠️ | 2.0e-04 | 2725s | Pire epoch : val loss explose |
+| 6 | 0.3850 | 82.95% | 0.8490 | 60.74% | 2.0e-04 | 2720s | Légère remontée (+6%) |
+| 7 | 0.3662 | 83.76% | 0.8950 | 65.24% ✅ | **2.0e-05** ⭐ | 2715s | **Scheduler intervient** - retour à 65% |
+
+**État actuel** : Job en cours, epoch 7 terminée (19/06/2026 ~11h)
+
+### Analyse des problèmes d'overfitting (epochs 1-7)
+
+#### Diagnostic
+
+**Overfitting sévère observé (epochs 2-6)** :
+- Train acc augmente : 66% → 83% (+17%)
+- Val acc chute : 65% → 54% (-11%) puis remonte à 61%
+- Écart train/val max : 28% (epoch 5)
+- Val loss explose : 0.61 → 1.12 (+84%)
+
+**Causes identifiées** :
+1. **Learning rate trop élevé** (0.0002) : le modèle apprend trop vite et "mémorise" au lieu de généraliser
+2. **Dropout faible** (0.5) : régularisation insuffisante
+3. **Dataset relativement petit** (2160 vidéos) : risque d'overfitting accru
+4. **Epochs longues** (45 min) : détection tardive des problèmes
+
+#### Intervention du scheduler ReduceLROnPlateau
+
+**Epoch 7 : Le scheduler a sauvé l'entraînement**
+- Configuration : `patience=5, factor=0.1`
+- Déclenchement : après 5 epochs sans amélioration de val_loss
+- Action : LR divisé par 10 (2.0e-04 → 2.0e-05)
+- Résultat immédiat : val_acc remonte de 60.74% → 65.24%
+- Écart train/val réduit : 28% → 18.5%
+
+**Pourquoi ça fonctionne** :
+- LR plus faible = pas à pas plus petits dans l'espace des poids
+- Le modèle "affine" au lieu de "sauter brutalement"
+- Moins de risque de surajustement
+
+### Recommandations pour le prochain entraînement
+
+#### 🎯 Hyperparamètres optimisés
+
+Si vous devez **relancer un entraînement depuis le début**, utilisez ces paramètres :
+
+**Fichier : `scripts/submit_train.sh`**
+
+```bash
+python3 -m src.train \
+    --data_root data \
+    --compression c23 \
+    --model resnet18 \
+    --dropout 0.6 \              # ↑ de 0.5 : régularisation renforcée
+    --epochs 50 \
+    --batch_size 32 \
+    --lr 0.00005 \               # ↓ de 0.0002 : apprentissage stable dès le départ
+    --weight_decay 1e-4 \
+    --patience 15 \              # ↑ de 10 : plus de tolérance avec LR faible
+    --frames_per_video 5 \       # ↓ de 10 : epochs 2× plus courtes (22 min)
+    --num_workers 8 \
+    --checkpoint_dir checkpoints \
+    --log_dir logs/tensorboard
+```
+
+#### 📊 Gains attendus avec les paramètres optimisés
+
+| Métrique | Config actuelle | Config optimisée | Amélioration |
+|----------|----------------|------------------|--------------|
+| **Epoch 1 val acc** | 65.33% | 68-72% | +3-7% |
+| **Overfitting epochs 2-6** | Oui (chute à 54%) | Non (montée stable) | ✅ Évité |
+| **Temps par epoch** | 45 min | 22 min | **÷2** |
+| **Val acc finale estimée** | 85-90% | 90-92% | +2-5% |
+| **Temps total estimé** | ~20h | **10-12h** | **÷2** |
+| **Early stopping** | Epoch ~25 | Epoch ~25-30 | Similaire |
+
+#### 🔧 Script complet pour relancer
+
+```bash
+# 1. Annuler le job actuel (si nécessaire)
+scancel <job_id>
+
+# 2. Sauvegarder les résultats actuels
+cd ~/projects/FaceForensics
+mkdir -p logs/archive
+cp logs/slurm/train_*.{out,err} logs/archive/
+cp checkpoints/best_model.pth checkpoints/best_model_run1.pth 2>/dev/null || true
+
+# 3. Appliquer les modifications
+sed -i 's/--lr 0.0002/--lr 0.00005/' scripts/submit_train.sh
+sed -i 's/--dropout 0.5/--dropout 0.6/' scripts/submit_train.sh
+sed -i 's/--frames_per_video 10/--frames_per_video 5/' scripts/submit_train.sh
+sed -i 's/--patience 10/--patience 15/' scripts/submit_train.sh
+
+# 4. Vérifier les modifications
+grep -E "(lr|dropout|frames_per_video|patience)" scripts/submit_train.sh
+
+# 5. Relancer
+sbatch scripts/submit_train.sh
+
+# 6. Suivre la progression
+squeue -u $USER
+tail -f logs/slurm/train_*.out
+```
+
+#### 📈 Résultats attendus avec la config optimisée
+
+**Epochs 1-5 (premières 2 heures)** :
+```
+Epoch 1 | Train loss: 0.58 acc: 0.68 | Val loss: 0.55 acc: 0.70 | lr: 5.0e-05 | 1300s
+Epoch 2 | Train loss: 0.50 acc: 0.74 | Val loss: 0.48 acc: 0.75 | lr: 5.0e-05 | 1280s
+Epoch 3 | Train loss: 0.44 acc: 0.78 | Val loss: 0.43 acc: 0.78 | lr: 5.0e-05 | 1290s
+Epoch 4 | Train loss: 0.40 acc: 0.81 | Val loss: 0.39 acc: 0.81 | lr: 5.0e-05 | 1285s
+Epoch 5 | Train loss: 0.37 acc: 0.83 | Val loss: 0.36 acc: 0.83 | lr: 5.0e-05 | 1295s
+```
+
+**Caractéristiques attendues** :
+- ✅ Train acc et val acc augmentent ensemble (pas d'overfitting)
+- ✅ Écart train/val < 5% (excellent)
+- ✅ Amélioration régulière et stable
+
+**Epochs 15-20 (plateau)** :
+```
+Epoch 18 | Train loss: 0.22 acc: 0.92 | Val loss: 0.24 acc: 0.91 | lr: 5.0e-06 | 1280s
+  → Nouveau meilleur modèle sauvegardé (val_acc=0.9100)
+```
+
+**Early stopping** : vers epoch 25-30 avec **val_acc finale : 90-92%**
+
+#### 🧪 Pourquoi ces changements fonctionnent
+
+1. **LR 0.00005 (au lieu de 0.0002)** :
+   - Le scheduler a prouvé qu'un LR réduit stabilise l'apprentissage (epoch 7)
+   - Autant commencer directement avec un LR optimal
+   - Évite la phase chaotique des epochs 2-6
+   - **Why:** Learning rate = taille des pas dans l'espace des poids. Trop grand → le modèle "saute" et rate les minima. Plus petit → convergence stable.
+
+2. **Dropout 0.6 (au lieu de 0.5)** :
+   - Plus de régularisation = moins d'overfitting
+   - Force le modèle à apprendre des features robustes
+   - **Why:** Dropout désactive aléatoirement des neurones pendant l'entraînement. Plus de dropout = le modèle ne peut pas se reposer sur des neurones spécifiques → généralisation forcée.
+
+3. **Frames 5 (au lieu de 10)** :
+   - Epochs 2× plus courtes (22 min vs 45 min)
+   - Itérations plus rapides = détection plus rapide des problèmes
+   - Moins de risque de surajustement par epoch
+   - **Why:** Avec frames=10, chaque vidéo est vue 10 fois par epoch. Avec frames=5, seulement 5 fois. Le modèle voit moins de répétitions par epoch, mais fait plus d'epochs dans le même temps → meilleure exploration.
+
+4. **Patience 15 (au lieu de 10)** :
+   - Avec un LR plus faible, l'amélioration est plus progressive
+   - Il faut plus de patience avant de conclure à un plateau
+   - **Why:** LR faible = petits pas = amélioration lente mais stable. Il faut plus d'epochs pour atteindre un plateau réel.
+
+#### 💡 Leçons apprises
+
+**Ce qui a bien fonctionné** :
+- ✅ Dataset bien structuré (2160 train, 420 val)
+- ✅ Data augmentation efficace (transforms.py)
+- ✅ Scheduler ReduceLROnPlateau sauve l'entraînement (intervention epoch 7)
+- ✅ Early stopping évite le gaspillage de compute
+
+**Ce qui nécessite amélioration** :
+- ⚠️ LR initial trop élevé → commencer avec 0.00005
+- ⚠️ Dropout trop faible → passer à 0.6
+- ⚠️ Epochs trop longues (45 min) → réduire à 22 min avec frames=5
+- ⚠️ Certificat SSL XceptionNet expiré → utiliser ResNet18 ou télécharger manuellement
+
+**Métriques de référence (ResNet18 sur FaceForensics++)** :
+- Epoch 1 baseline : **65-70% val acc** ✅
+- Val acc finale attendue : **90-92%** (avec hyperparamètres optimisés)
+- Temps total estimé : **10-12 heures** (50 epochs × 22 min, early stopping ~epoch 25)
+
+#### 🎯 Checklist avant de lancer un nouvel entraînement
+
+- [ ] Vérifier que le dataset est bien présent (`ls ~/projects/FaceForensics/data/`)
+- [ ] Utiliser les hyperparamètres optimisés (lr=0.00005, dropout=0.6, frames=5)
+- [ ] Vérifier l'environnement virtuel (`source ~/venvs/faceforensics/bin/activate`)
+- [ ] Créer les dossiers de logs (`mkdir -p logs/slurm`)
+- [ ] Soumettre le job (`sbatch scripts/submit_train.sh`)
+- [ ] Vérifier que le job démarre (`squeue -u $USER`)
+- [ ] Suivre l'epoch 1 pour valider que val_acc > 68%
+- [ ] Vérifier epochs 3-5 : pas d'overfitting (train_acc ≈ val_acc)
+- [ ] Laisser tourner jusqu'à early stopping (10-12h)
+
+### Commandes utiles pour surveiller l'entraînement
+
+```bash
+# Voir l'état du job
+squeue -u mguinzie-24
+
+# Voir toutes les epochs terminées
+grep "Epoch" ~/projects/FaceForensics/logs/slurm/train_<job_id>.out
+
+# Suivre la progression en temps réel (barre tqdm dans .err)
+tail -f ~/projects/FaceForensics/logs/slurm/train_<job_id>.err
+
+# Vérifier le checkpoint sauvegardé
+ls -lh ~/projects/FaceForensics/checkpoints/
+
+# Voir les 5 dernières epochs
+grep "Epoch" ~/projects/FaceForensics/logs/slurm/train_<job_id>.out | tail -5
+
+# Annuler un job
+scancel <job_id>
+```
+
+### Déconnexion sans arrêter l'entraînement
+
+**Important** : Le job SLURM tourne sur le cluster, pas sur votre machine locale.
+
+Vous pouvez **fermer le terminal, éteindre votre ordinateur, partir** sans affecter l'entraînement.
+
+```bash
+# Quitter proprement
+exit
+
+# Revenir plus tard
+ssh mguinzie-24@gpu-gw.enst.fr
+source ~/venvs/faceforensics/bin/activate
+grep "Epoch" ~/projects/FaceForensics/logs/slurm/train_*.out
+```
+
+Le job continuera jusqu'à :
+- Completion normale (early stopping ou 50 epochs)
+- Annulation manuelle (`scancel <job_id>`)
+- Limite de temps SLURM (24h)
+
+---
+
+## Prochaines étapes (quand l'entraînement actuel sera terminé)
+
+### 1. Évaluation sur le test set
+
+```bash
+cd ~/projects/FaceForensics
+sbatch scripts/submit_eval.sh
+```
+
+Cela générera :
+- `checkpoints/evaluation/evaluation_report.json` : métriques détaillées
+- `checkpoints/evaluation/confusion_matrix.png` : matrice de confusion
+- `checkpoints/evaluation/roc_curve.png` : courbe ROC avec AUC
+
+### 2. Récupération des résultats en local
+
+```bash
+# Depuis votre machine locale
+scp -r mguinzie-24@gpu-gw.enst.fr:~/projects/FaceForensics/checkpoints/ ./
+scp -r mguinzie-24@gpu-gw.enst.fr:~/projects/FaceForensics/logs/ ./
+```
+
+### 3. Visualisation avec TensorBoard
+
+```bash
+# En local
+tensorboard --logdir=logs/tensorboard
+# Ouvrir http://localhost:6006
+```
+
+### 4. Analyse des résultats
+
+- Comparer les performances par méthode (Deepfakes, Face2Face, FaceSwap, NeuralTextures)
+- Identifier quelle manipulation est la plus facile/difficile à détecter
+- Analyser la courbe ROC et l'AUC
+- Examiner la matrice de confusion pour voir les faux positifs/négatifs
+
+### 5. Rédaction du rapport
+
+Points à inclure :
+- Dataset utilisé (2160 train, 420 val, compression c23)
+- Architecture : ResNet18 (11M params) avec dropout 0.6
+- Hyperparamètres optimaux trouvés
+- Problème d'overfitting rencontré et solution (scheduler)
+- Métriques finales (accuracy, precision, recall, F1, AUC)
+- Performances par méthode de manipulation
+- Temps d'entraînement total

@@ -172,17 +172,20 @@ def main(args):
     # ---------------------------------------------------------------
     # Loss, optimizer, scheduler
     # ---------------------------------------------------------------
-    # CrossEntropyLoss : mesure l'erreur entre la prédiction et le vrai label
-    criterion = nn.CrossEntropyLoss()
+    # CrossEntropyLoss avec Label Smoothing : réduit l'overfitting
+    # label_smoothing=0.1 : transforme 0→0.05, 1→0.95 au lieu de 0→0, 1→1
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
     # Adam : algorithme d'optimisation qui ajuste les poids du modèle
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    # Scheduler : réduit le learning rate si la val loss stagne
-    # patience=5 : attend 5 epochs sans amélioration avant de réduire
-    # factor=0.1 : divise le lr par 10
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=5, factor=0.1,
+    # Scheduler : Cosine Annealing with Warm Restarts
+    # Plus stable que ReduceLROnPlateau, redémarre périodiquement
+    # T_0=10 : période initiale de 10 epochs
+    # T_mult=2 : doubler la période à chaque redémarrage
+    # eta_min=1e-6 : LR minimum
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2, eta_min=1e-6,
     )
 
     # ---------------------------------------------------------------
@@ -199,10 +202,21 @@ def main(args):
     epochs_without_improvement = 0
     history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
 
+    # Warmup LR : augmenter progressivement le LR pendant les 3 premières epochs
+    warmup_epochs = 3
+    warmup_lr_start = 1e-6
+
     print(f'\nDémarrage: {args.epochs} epochs, batch_size={args.batch_size}, lr={args.lr}')
+    print(f'Warmup: {warmup_epochs} epochs ({warmup_lr_start:.1e} → {args.lr:.1e})')
     print('-' * 60)
 
     for epoch in range(1, args.epochs + 1):
+        # Warmup : augmenter progressivement le LR
+        if epoch <= warmup_epochs:
+            warmup_factor = epoch / warmup_epochs
+            warmup_lr = warmup_lr_start + (args.lr - warmup_lr_start) * warmup_factor
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = warmup_lr
         start_time = time.time()
 
         # Train
@@ -213,8 +227,9 @@ def main(args):
         # Validation
         val_loss, val_acc = validate(model, val_loader, criterion, device)
 
-        # Scheduler : ajuste le lr en fonction de la val loss
-        scheduler.step(val_loss)
+        # Scheduler : step après le warmup
+        if epoch > warmup_epochs:
+            scheduler.step()
 
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
