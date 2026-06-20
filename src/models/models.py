@@ -55,7 +55,6 @@ class TransferModel(nn.Module):
                 self.model = torchvision.models.resnet50(pretrained=True)
             if modelchoice == 'resnet18':
                 self.model = torchvision.models.resnet18(pretrained=True)
-            # Replace fc
             num_ftrs = self.model.fc.in_features
             if not dropout:
                 self.model.fc = nn.Linear(num_ftrs, num_out_classes)
@@ -64,6 +63,13 @@ class TransferModel(nn.Module):
                     nn.Dropout(p=dropout),
                     nn.Linear(num_ftrs, num_out_classes)
                 )
+        elif modelchoice == 'efficientnet':
+            self.model = torchvision.models.efficientnet_b0(weights='IMAGENET1K_V1')
+            num_ftrs = self.model.classifier[1].in_features
+            self.model.classifier = nn.Sequential(
+                nn.Dropout(p=dropout if dropout else 0.2),
+                nn.Linear(num_ftrs, num_out_classes)
+            )
         else:
             raise Exception('Choose valid model, e.g. resnet50')
 
@@ -102,8 +108,10 @@ class TransferModel(nn.Module):
                 for param in self.model.last_linear.parameters():
                     param.requires_grad = True
 
+            elif self.modelchoice == 'efficientnet':
+                for param in self.model.classifier.parameters():
+                    param.requires_grad = True
             else:
-                # Make fc trainable
                 for param in self.model.fc.parameters():
                     param.requires_grad = True
 
@@ -124,6 +132,10 @@ def model_selection(modelname, num_out_classes,
                True, ['image'], None
     elif modelname == 'resnet18':
         return TransferModel(modelchoice='resnet18', dropout=dropout,
+                             num_out_classes=num_out_classes), \
+               224, True, ['image'], None
+    elif modelname == 'efficientnet':
+        return TransferModel(modelchoice='efficientnet', dropout=dropout,
                              num_out_classes=num_out_classes), \
                224, True, ['image'], None
     else:

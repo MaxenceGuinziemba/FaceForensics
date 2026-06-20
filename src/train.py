@@ -1,14 +1,6 @@
-"""
-Script d'entraînement pour la détection de deepfakes avec XceptionNet.
-
-Usage:
-    python -m src.train --data_root data --compression c40 --epochs 5       # test local
-    python -m src.train --data_root ~/datasets/ff++ --compression c23       # cluster GPU
-
-Tout est configurable via les arguments en ligne de commande (voir --help).
-"""
 import argparse
 import os
+import random
 import time
 from os.path import join
 
@@ -23,6 +15,7 @@ from tqdm import tqdm
 
 from src.models import model_selection
 from src.data import FaceForensicsDataset, xception_default_data_transforms
+from src.data.mixup import mixup_data, mixup_criterion
 
 
 def plot_training_curves(train_losses, val_losses, train_accs, val_accs, output_path):
@@ -51,10 +44,6 @@ def plot_training_curves(train_losses, val_losses, train_accs, val_accs, output_
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
-    """
-    Une epoch d'entraînement.
-    Retourne la loss moyenne et l'accuracy sur tout le train set.
-    """
     model.train()
     running_loss = 0.0
     correct = 0
@@ -64,32 +53,31 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         frames = frames.to(device)
         labels = labels.to(device)
 
-        # Forward : le modèle prédit
-        outputs = model(frames)
-        loss = criterion(outputs, labels)
+        if random.random() < 0.5:
+            frames, labels_a, labels_b, lam = mixup_data(frames, labels, alpha=0.4, device=device)
+            outputs = model(frames)
+            loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
+            _, predicted = torch.max(outputs, 1)
+            correct += (lam * (predicted == labels_a).sum().item()
+                        + (1 - lam) * (predicted == labels_b).sum().item())
+        else:
+            outputs = model(frames)
+            loss = criterion(outputs, labels)
+            _, predicted = torch.max(outputs, 1)
+            correct += (predicted == labels).sum().item()
 
-        # Backward : on ajuste les poids
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        # Métriques
         running_loss += loss.item() * frames.size(0)
-        _, predicted = torch.max(outputs, 1)
-        correct += (predicted == labels).sum().item()
         total += labels.size(0)
 
-    epoch_loss = running_loss / total
-    epoch_acc = correct / total
-    return epoch_loss, epoch_acc
+    return running_loss / total, correct / total
 
 
 @torch.no_grad()
 def validate(model, loader, criterion, device):
-    """
-    Évaluation sur le val set (pas de backpropagation).
-    Retourne la loss moyenne et l'accuracy.
-    """
     model.eval()
     running_loss = 0.0
     correct = 0
@@ -107,21 +95,13 @@ def validate(model, loader, criterion, device):
         correct += (predicted == labels).sum().item()
         total += labels.size(0)
 
-    epoch_loss = running_loss / total
-    epoch_acc = correct / total
-    return epoch_loss, epoch_acc
+    return running_loss / total, correct / total
 
 
 def main(args):
-    # ---------------------------------------------------------------
-    # Device : GPU si disponible, sinon CPU
-    # ---------------------------------------------------------------
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    # ---------------------------------------------------------------
-    # Modèle : XceptionNet adapté pour 2 classes (real/fake)
-    # ---------------------------------------------------------------
     model, image_size, *_ = model_selection(
         modelname=args.model,
         num_out_classes=2,
@@ -130,9 +110,6 @@ def main(args):
     model = model.to(device)
     print(f'Modèle: {args.model} (dropout={args.dropout})')
 
-    # ---------------------------------------------------------------
-    # Datasets : train et val
-    # ---------------------------------------------------------------
     train_dataset = FaceForensicsDataset(
         data_root=args.data_root,
         split_path=join(args.splits_dir, 'train.json'),
@@ -151,67 +128,43 @@ def main(args):
     print(f'Train: {len(train_dataset.samples)} vidéos ({train_dataset.get_label_counts()}) → {len(train_dataset)} samples/epoch')
     print(f'Val:   {len(val_dataset.samples)} vidéos ({val_dataset.get_label_counts()}) → {len(val_dataset)} samples/epoch')
 
-    # ---------------------------------------------------------------
-    # DataLoaders : regroupent les images en batch
-    # ---------------------------------------------------------------
     train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True,
+        train_dataset, batch_size=args.batch_size, shuffle=True,
+        num_workers=args.num_workers, pin_memory=True,
     )
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=True,
+        val_dataset, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.num_workers, pin_memory=True,
     )
 
-    # ---------------------------------------------------------------
-    # Loss, optimizer, scheduler
-    # ---------------------------------------------------------------
-    # CrossEntropyLoss avec Label Smoothing : réduit l'overfitting
-    # label_smoothing=0.1 : transforme 0→0.05, 1→0.95 au lieu de 0→0, 1→1
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-
-    # Adam : algorithme d'optimisation qui ajuste les poids du modèle
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-
-    # Scheduler : Cosine Annealing with Warm Restarts
-    # Plus stable que ReduceLROnPlateau, redémarre périodiquement
-    # T_0=10 : période initiale de 10 epochs
-    # T_mult=2 : doubler la période à chaque redémarrage
-    # eta_min=1e-6 : LR minimum
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=10, T_mult=2, eta_min=1e-6,
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.epochs, eta_min=1e-6,
     )
 
-    # ---------------------------------------------------------------
-    # TensorBoard : pour visualiser les courbes d'entraînement
-    # ---------------------------------------------------------------
     writer = SummaryWriter(log_dir=args.log_dir)
-
-    # ---------------------------------------------------------------
-    # Boucle d'entraînement
-    # ---------------------------------------------------------------
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     best_val_acc = 0.0
     epochs_without_improvement = 0
     history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
-
-    # Warmup LR : augmenter progressivement le LR pendant les 3 premières epochs
     warmup_epochs = 3
     warmup_lr_start = 1e-6
+
+    # Freeze: seul le classifier est entraîné pendant les 5 premières epochs
+    freeze_epochs = 5
+    model.set_trainable_up_to(False)
+    print(f'Freeze: epochs 1-{freeze_epochs} (classifier only), puis unfreeze all')
 
     print(f'\nDémarrage: {args.epochs} epochs, batch_size={args.batch_size}, lr={args.lr}')
     print(f'Warmup: {warmup_epochs} epochs ({warmup_lr_start:.1e} → {args.lr:.1e})')
     print('-' * 60)
 
     for epoch in range(1, args.epochs + 1):
-        # Warmup : augmenter progressivement le LR
+        if epoch == freeze_epochs + 1:
+            model.set_trainable_up_to(False, layername=None)
+            print('  → Unfreeze: toutes les couches sont maintenant entraînables')
         if epoch <= warmup_epochs:
             warmup_factor = epoch / warmup_epochs
             warmup_lr = warmup_lr_start + (args.lr - warmup_lr_start) * warmup_factor
@@ -219,15 +172,9 @@ def main(args):
                 param_group['lr'] = warmup_lr
         start_time = time.time()
 
-        # Train
-        train_loss, train_acc = train_one_epoch(
-            model, train_loader, criterion, optimizer, device,
-        )
-
-        # Validation
+        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
         val_loss, val_acc = validate(model, val_loader, criterion, device)
 
-        # Scheduler : step après le warmup
         if epoch > warmup_epochs:
             scheduler.step()
 
@@ -239,19 +186,16 @@ def main(args):
         elapsed = time.time() - start_time
         current_lr = optimizer.param_groups[0]['lr']
 
-        # Affichage
         print(f'Epoch {epoch:3d}/{args.epochs} | '
               f'Train loss: {train_loss:.4f} acc: {train_acc:.4f} | '
               f'Val loss: {val_loss:.4f} acc: {val_acc:.4f} | '
               f'lr: {current_lr:.1e} | '
               f'{elapsed:.0f}s')
 
-        # TensorBoard
         writer.add_scalars('Loss', {'train': train_loss, 'val': val_loss}, epoch)
         writer.add_scalars('Accuracy', {'train': train_acc, 'val': val_acc}, epoch)
         writer.add_scalar('Learning_rate', current_lr, epoch)
 
-        # Sauvegarde du meilleur modèle
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             epochs_without_improvement = 0
@@ -268,7 +212,6 @@ def main(args):
         else:
             epochs_without_improvement += 1
 
-        # Early stopping : arrêter si pas d'amélioration depuis N epochs
         if epochs_without_improvement >= args.patience:
             print(f'\nEarly stopping: pas d\'amélioration depuis {args.patience} epochs')
             break
@@ -281,9 +224,8 @@ def main(args):
         history['train_acc'], history['val_acc'],
         curves_path,
     )
-    print(f'\nCourbes d\'entraînement sauvegardées: {curves_path}')
+    print(f'\nCourbes sauvegardées: {curves_path}')
     print(f'Meilleure val accuracy: {best_val_acc:.4f}')
-    print(f'Modèle sauvegardé dans: {args.checkpoint_dir}/best_model.pth')
 
 
 if __name__ == '__main__':
@@ -291,46 +233,19 @@ if __name__ == '__main__':
         description='Entraînement détection de deepfakes',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-
-    # Données
-    parser.add_argument('--data_root', type=str, default='data',
-                        help='Chemin vers le dossier data/')
-    parser.add_argument('--splits_dir', type=str, default='configs/splits',
-                        help='Dossier contenant train.json, val.json, test.json')
-    parser.add_argument('--compression', type=str, default='c40',
-                        choices=['c0', 'c23', 'c40'],
-                        help='Niveau de compression des vidéos')
-
-    # Modèle
-    parser.add_argument('--model', type=str, default='xception',
-                        choices=['xception', 'resnet18'],
-                        help='Architecture du modèle')
-    parser.add_argument('--dropout', type=float, default=0.5,
-                        help='Taux de dropout (0 = pas de dropout)')
-
-    # Entraînement
-    parser.add_argument('--epochs', type=int, default=50,
-                        help='Nombre maximum d\'epochs')
-    parser.add_argument('--batch_size', type=int, default=32,
-                        help='Taille du batch (réduire si Out Of Memory)')
-    parser.add_argument('--lr', type=float, default=0.0002,
-                        help='Learning rate initial')
-    parser.add_argument('--weight_decay', type=float, default=1e-4,
-                        help='Régularisation L2')
-    parser.add_argument('--patience', type=int, default=10,
-                        help='Early stopping: epochs sans amélioration avant arrêt')
-    parser.add_argument('--frames_per_video', type=int, default=10,
-                        help='Nombre de frames échantillonnées par vidéo par epoch')
-
-    # Workers
-    parser.add_argument('--num_workers', type=int, default=4,
-                        help='Nombre de workers pour le chargement des données')
-
-    # Sorties
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints',
-                        help='Dossier pour sauvegarder les modèles')
-    parser.add_argument('--log_dir', type=str, default='logs',
-                        help='Dossier pour les logs TensorBoard')
-
+    parser.add_argument('--data_root', type=str, default='data')
+    parser.add_argument('--splits_dir', type=str, default='configs/splits')
+    parser.add_argument('--compression', type=str, default='c40', choices=['c0', 'c23', 'c40'])
+    parser.add_argument('--model', type=str, default='xception', choices=['xception', 'resnet18', 'efficientnet'])
+    parser.add_argument('--dropout', type=float, default=0.5)
+    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--lr', type=float, default=0.0002)
+    parser.add_argument('--weight_decay', type=float, default=1e-4)
+    parser.add_argument('--patience', type=int, default=10)
+    parser.add_argument('--frames_per_video', type=int, default=10)
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
+    parser.add_argument('--log_dir', type=str, default='logs')
     args = parser.parse_args()
     main(args)

@@ -28,3 +28,6 @@ Thumbs.db
 # PyTorch
 *.pth
 *.pt
+
+# Face detection models (auto-downloaded)
+.face_models/
