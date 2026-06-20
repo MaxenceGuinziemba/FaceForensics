@@ -54,7 +54,7 @@ echo ""
 
 # --- Entraînement ---
 python3 -m src.train \
-    --data_root data \
+    --data_root ~/projects/FaceForensics/data \
     --compression c23 \
     --model resnet18 \
     --dropout 0.6 \
