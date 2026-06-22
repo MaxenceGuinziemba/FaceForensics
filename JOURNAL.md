@@ -906,3 +906,40 @@ git pull origin main
 cp checkpoints/best_model.pth checkpoints/best_model_v3.pth
 sbatch scripts/submit_train_optimized.sh
 ```
+
+---
+
+## V5 : EfficientNet-B4 + faces pré-extraites
+
+- **Date** : 2026-06-22
+
+### Motivations
+
+1. **EfficientNet-B4** (19M params) au lieu de B0 (5.3M params) — le benchmark FaceForensics++ montre B4 à 78% vs B0 en dessous. Plus de capacité = meilleures features.
+
+2. **Pré-extraction des visages sur disque** — au lieu d'exécuter le détecteur de visages à chaque frame à chaque epoch (~1400s/epoch), on extrait 30 faces par vidéo une seule fois (~1h). Les epochs passent à ~200-300s, ce qui permet d'itérer 5-7x plus vite.
+
+3. **Plus de données** — 30 faces/vidéo × 2160 vidéos = 64,800 images train (vs 10,800 avec frames_per_video=5).
+
+### Fichiers modifiés/créés
+
+- `src/models/models.py` — ajout EfficientNet-B4 comme choix de modèle
+- `src/data/dataset.py` — paramètre `faces_dir` pour charger les visages pré-extraits
+- `src/train.py` — argument `--faces_dir` et `--model efficientnet_b4`
+- `scripts/extract_faces.py` — script de pré-extraction (30 faces/vidéo, frames équidistantes)
+- `scripts/submit_train_v5.sh` — script SLURM (extraction + entraînement)
+
+### Commandes
+
+```bash
+git pull origin dev/training-pipeline
+sbatch scripts/submit_train_v5.sh
+```
+
+Le script SLURM extrait les faces automatiquement s'il ne les trouve pas, puis lance l'entraînement.
+
+### Résultats attendus
+
+- Epochs ~200-300s (vs 1400s en V3/V4)
+- Val acc finale : 85-90%
+- Durée totale : ~1h extraction + ~3-4h entraînement

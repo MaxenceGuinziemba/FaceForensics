@@ -116,6 +116,7 @@ def main(args):
         compression=args.compression,
         transform=xception_default_data_transforms['train'],
         num_frames_per_video=args.frames_per_video,
+        faces_dir=args.faces_dir,
     )
     val_dataset = FaceForensicsDataset(
         data_root=args.data_root,
@@ -123,6 +124,7 @@ def main(args):
         compression=args.compression,
         transform=xception_default_data_transforms['val'],
         num_frames_per_video=args.frames_per_video,
+        faces_dir=args.faces_dir,
     )
 
     print(f'Train: {len(train_dataset.samples)} vidéos ({train_dataset.get_label_counts()}) → {len(train_dataset)} samples/epoch')
@@ -236,7 +238,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_root', type=str, default='data')
     parser.add_argument('--splits_dir', type=str, default='configs/splits')
     parser.add_argument('--compression', type=str, default='c40', choices=['c0', 'c23', 'c40'])
-    parser.add_argument('--model', type=str, default='xception', choices=['xception', 'resnet18', 'efficientnet'])
+    parser.add_argument('--model', type=str, default='xception', choices=['xception', 'resnet18', 'efficientnet', 'efficientnet_b4'])
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=32)
@@ -245,6 +247,8 @@ if __name__ == '__main__':
     parser.add_argument('--patience', type=int, default=10)
     parser.add_argument('--frames_per_video', type=int, default=10)
     parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--faces_dir', type=str, default=None,
+                        help='Dossier des visages pré-extraits (skip face detection on-the-fly)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
     parser.add_argument('--log_dir', type=str, default='logs')
     args = parser.parse_args()

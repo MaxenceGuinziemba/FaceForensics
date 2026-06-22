@@ -70,6 +70,13 @@ class TransferModel(nn.Module):
                 nn.Dropout(p=dropout if dropout else 0.2),
                 nn.Linear(num_ftrs, num_out_classes)
             )
+        elif modelchoice == 'efficientnet_b4':
+            self.model = torchvision.models.efficientnet_b4(weights='IMAGENET1K_V1')
+            num_ftrs = self.model.classifier[1].in_features
+            self.model.classifier = nn.Sequential(
+                nn.Dropout(p=dropout if dropout else 0.2),
+                nn.Linear(num_ftrs, num_out_classes)
+            )
         else:
             raise Exception('Choose valid model, e.g. resnet50')
 
@@ -108,7 +115,7 @@ class TransferModel(nn.Module):
                 for param in self.model.last_linear.parameters():
                     param.requires_grad = True
 
-            elif self.modelchoice == 'efficientnet':
+            elif self.modelchoice in ('efficientnet', 'efficientnet_b4'):
                 for param in self.model.classifier.parameters():
                     param.requires_grad = True
             else:
@@ -138,6 +145,10 @@ def model_selection(modelname, num_out_classes,
         return TransferModel(modelchoice='efficientnet', dropout=dropout,
                              num_out_classes=num_out_classes), \
                224, True, ['image'], None
+    elif modelname == 'efficientnet_b4':
+        return TransferModel(modelchoice='efficientnet_b4', dropout=dropout,
+                             num_out_classes=num_out_classes), \
+               299, True, ['image'], None
     else:
         raise NotImplementedError(modelname)
 
