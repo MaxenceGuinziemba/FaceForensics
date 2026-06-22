@@ -85,7 +85,7 @@ class TransferModel(nn.Module):
         if layername is None:
             for i, param in self.model.named_parameters():
                 param.requires_grad = True
-                return
+            return
         else:
             for i, param in self.model.named_parameters():
                 param.requires_grad = False

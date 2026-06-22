@@ -812,3 +812,97 @@ Points à inclure :
 - Métriques finales (accuracy, precision, recall, F1, AUC)
 - Performances par méthode de manipulation
 - Temps d'entraînement total
+
+---
+
+## Entraînement V3 : EfficientNet + Face Extraction + Mixup + Freeze/Unfreeze
+
+### Configuration
+
+- **Date** : 2026-06-20 → 2026-06-21
+- **Job** : submit_train_optimized.sh
+- **Modèle** : EfficientNet-B0 (5.3M params)
+- **Hyperparamètres** : lr=0.00003, dropout=0.5, weight_decay=5e-4, batch_size=32, frames_per_video=5
+- **Scheduler** : CosineAnnealingLR (T_max=50, eta_min=1e-6)
+- **Améliorations appliquées** :
+  - Extraction de visages (OpenCV DNN SSD) dans `src/data/face_extraction.py`
+  - Mixup (alpha=0.4, probabilité 50%) dans `src/data/mixup.py`
+  - Augmentations avancées (JPEGCompression, GaussianNoise, CutOut) dans `src/data/augmentations.py`
+  - Label smoothing (0.1)
+  - LR warmup (3 epochs, 1e-6 → 3e-5)
+  - Freeze/unfreeze (classifier seul pendant 5 epochs, puis unfreeze tout)
+
+### Résultats (50 epochs, pas d'early stopping)
+
+| Epoch | Train loss | Train acc | Val loss | Val acc | LR |
+|-------|------------|-----------|----------|---------|-----|
+| 1 | - | - | - | - | ~1e-5 (warmup) |
+| 45 | 0.6214 | 68.62% | 0.5973 | 72.33% | 2.8e-06 |
+| 46 | 0.6249 | 67.86% | 0.5973 | 73.29% | 2.4e-06 |
+| 47 | 0.6242 | 68.20% | 0.5952 | 73.29% | 2.0e-06 |
+| 48 | 0.6242 | 68.23% | 0.6013 | 73.05% | 1.7e-06 |
+| 49 | 0.6251 | 67.98% | 0.6048 | 72.95% | 1.5e-06 |
+| 50 | 0.6241 | 68.28% | 0.5992 | 72.57% | 1.3e-06 |
+
+**Meilleure val accuracy : 73.81%**
+**Durée** : ~20h (50 × ~1430s/epoch)
+
+### Analyse : pourquoi ça plafonne à 73%
+
+**Symptôme principal** : train acc (68%) < val acc (73%). C'est un pattern d'underfitting — le modèle ne peut pas apprendre correctement sur le train set.
+
+**Bug critique identifié** : dans `src/models/models.py`, méthode `set_trainable_up_to()`, le `return` à la ligne 88 était **à l'intérieur du for loop** au lieu d'être après :
+
+```python
+# BUGUÉ (V3) :
+if layername is None:
+    for i, param in self.model.named_parameters():
+        param.requires_grad = True
+        return  # ← retourne après le 1er paramètre !
+
+# CORRIGÉ (V4) :
+if layername is None:
+    for i, param in self.model.named_parameters():
+        param.requires_grad = True
+    return  # ← retourne après avoir unfreeezé TOUS les paramètres
+```
+
+**Conséquence** : à l'epoch 6, quand `train.py` appelle `model.set_trainable_up_to(False, layername=None)` pour unfreezer le backbone, seul le **premier paramètre** était dégelé. Le backbone EfficientNet restait gelé pendant les 45 epochs suivantes. Le modèle n'entraînait que son classifier head — d'où le plafond à 68% train / 73% val.
+
+**Problèmes secondaires** :
+- CosineAnnealingLR poussait le LR à ~1e-6 dès epoch 40, le modèle arrêtait d'apprendre trop tôt
+- Mixup à 50% des batches ajoutait trop de bruit sur un modèle qui ne pouvait déjà pas apprendre
+
+---
+
+## V4 : Corrections appliquées
+
+- **Date** : 2026-06-22
+
+### Modifications (3 changements ciblés)
+
+1. **Fix unfreeze bug** (`src/models/models.py:88`) : dédentation du `return` pour qu'il soit après la boucle for. Tout le backbone s'unfreeze maintenant correctement à l'epoch 6.
+
+2. **Scheduler** (`src/train.py:142-144`) : remplacement de `CosineAnnealingLR` par `ReduceLROnPlateau(mode='min', factor=0.5, patience=5, min_lr=1e-7)`. Le LR ne baisse que quand la val loss stagne réellement.
+
+3. **Mixup** (`src/train.py:56`) : probabilité réduite de 0.5 à 0.3. Plus d'exemples réels pour que le backbone puisse apprendre.
+
+### Résultats attendus
+
+- Epoch 6+ : train acc devrait monter au-dessus de 75% (backbone entraîné)
+- Val acc finale attendue : 80-88%
+- Durée estimée : 12-16h (early stopping probable vers epoch 25-35)
+
+### Commandes
+
+**Évaluation du modèle V3 actuel** (~10-15 min) :
+```bash
+sbatch scripts/submit_eval.sh
+```
+
+**Relancer l'entraînement V4** (après git pull) :
+```bash
+git pull origin main
+cp checkpoints/best_model.pth checkpoints/best_model_v3.pth
+sbatch scripts/submit_train_optimized.sh
+```

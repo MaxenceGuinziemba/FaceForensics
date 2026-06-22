@@ -53,7 +53,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         frames = frames.to(device)
         labels = labels.to(device)
 
-        if random.random() < 0.5:
+        if random.random() < 0.3:
             frames, labels_a, labels_b, lam = mixup_data(frames, labels, alpha=0.4, device=device)
             outputs = model(frames)
             loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
@@ -139,8 +139,8 @@ def main(args):
 
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs, eta_min=1e-6,
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-7,
     )
 
     writer = SummaryWriter(log_dir=args.log_dir)
@@ -176,7 +176,7 @@ def main(args):
         val_loss, val_acc = validate(model, val_loader, criterion, device)
 
         if epoch > warmup_epochs:
-            scheduler.step()
+            scheduler.step(val_loss)
 
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
