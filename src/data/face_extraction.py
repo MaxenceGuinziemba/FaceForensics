@@ -32,11 +32,9 @@ def get_detector():
         _download(PROTO_URL, proto)
         _download(MODEL_URL, model)
         _net = cv2.dnn.readNetFromCaffe(proto, model)
-        try:
+        if cv2.cuda.getCudaEnabledDeviceCount() > 0:
             _net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
             _net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-        except Exception:
-            pass
     return _net
 
 
