@@ -887,59 +887,296 @@ if layername is None:
 
 3. **Mixup** (`src/train.py:56`) : probabilité réduite de 0.5 à 0.3. Plus d'exemples réels pour que le backbone puisse apprendre.
 
-### Résultats attendus
+### Résultats V4 (Job 860139 - en cours au 2026-06-23)
 
-- Epoch 6+ : train acc devrait monter au-dessus de 75% (backbone entraîné)
-- Val acc finale attendue : 80-88%
-- Durée estimée : 12-16h (early stopping probable vers epoch 25-35)
+**Cluster** : gpu-gw.enst.fr, node40, RTX 3090 24GB
+**Config** : EfficientNet-B0, lr=3e-05, dropout=0.5, weight_decay=5e-4, batch_size=32, frames_per_video=5, patience=20 (early stopping), ReduceLROnPlateau(factor=0.5, patience=5)
 
-### Commandes
+| Epoch | Train loss | Train acc | Val loss | Val acc | LR | Observation |
+|-------|------------|-----------|----------|---------|-----|-------------|
+| 1 | 0.6684 | 62.05% | 0.6583 | 65.81% | 1.1e-05 | Warmup (1/3) |
+| 2 | 0.6573 | 65.86% | 0.6501 | 66.81% | 2.0e-05 | Warmup (2/3) |
+| 3 | 0.6518 | 65.97% | 0.6423 | 67.43% | 3.0e-05 | Warmup terminé |
+| 4 | 0.6474 | 66.35% | 0.6354 | 67.43% | 3.0e-05 | Freeze (classifier seul) |
+| 5 | 0.6466 | 66.39% | 0.6353 | 67.29% | 3.0e-05 | Dernière epoch freeze |
+| **6** | **0.6184** | **68.53%** | **0.5358** | **77.62%** | 3.0e-05 | **Unfreeze → saut +10% val acc** ✅ |
+| 7 | 0.5669 | 73.48% | 0.4701 | 83.67% | 3.0e-05 | Backbone apprend rapidement |
+| 8 | 0.5329 | 76.80% | 0.4297 | 86.05% | 3.0e-05 | |
+| 9 | 0.5017 | 79.50% | 0.4083 | 87.57% | 3.0e-05 | |
+| 10 | 0.4723 | 82.04% | 0.3920 | 88.19% | 3.0e-05 | Meilleur modèle |
+| 11-15 | ↘ 0.41 | ↗ 87% | ~0.40 | ~88% | 3.0e-05 | Plateau, oscillations |
+| **16** | 0.4123 | 86.74% | **0.3777** | **89.05%** | 3.0e-05 | **Nouveau best** |
+| 17-21 | ↘ 0.37 | ↗ 90% | ~0.40 | ~88% | 3.0e-05 | Val loss stagne 5 epochs |
+| **22** | 0.3758 | 89.31% | 0.3993 | 87.67% | **1.5e-05** | **Scheduler ÷2** |
+| **23** | 0.3589 | 90.51% | 0.3801 | **89.71%** | 1.5e-05 | **Nouveau best** ✅ |
+| 24-26 | ~0.36 | ~91% | ~0.38 | ~89% | 1.5e-05 | Stabilisation |
+| 27 | 0.3546 | 90.71% | 0.3781 | 89.67% | 1.5e-05 | Proche du record |
+| 28 | 0.3681 | 89.63% | 0.4152 | 86.76% | 1.5e-05 | Spike négatif (bruit) |
 
-**Évaluation du modèle V3 actuel** (~10-15 min) :
-```bash
-sbatch scripts/submit_eval.sh
+**Meilleur modèle sauvegardé** : epoch 23, val_acc = **89.71%**, val_loss = 0.3801
+
+### Analyse V4 : le fix du bug a tout changé
+
+#### Preuve que le fix fonctionne
+
+Le moment clé est l'**epoch 6** (unfreeze du backbone) :
+
+| | V3 (bugué) | V4 (fixé) |
+|---|---|---|
+| Val acc epoch 5 (freeze) | ~67% | 67.29% |
+| Val acc epoch 6 (unfreeze) | ~68% (+1%) | **77.62% (+10%)** |
+| Val acc epoch 10 | ~70% | **88.19%** |
+| Val acc finale | 73.81% (epoch 50) | **89.71%** (epoch 23) |
+| Train acc finale | 68% | 91% |
+| Pattern | **Underfitting** (train < val) | **Sain** (train ≈ val) |
+
+En V3, `set_trainable_up_to(False, layername=None)` ne dégelait qu'**un seul paramètre** (le `return` était à l'intérieur du `for`). Le backbone EfficientNet restait gelé — le modèle ne pouvait apprendre qu'avec son classifier head de 2 couches. D'où le plafond à 68% train / 73% val.
+
+En V4, tous les paramètres du backbone sont dégelés. Le modèle peut maintenant ajuster ses features de bas niveau (textures, artefacts de compression) → +16% de val accuracy.
+
+#### Comportement du scheduler ReduceLROnPlateau
+
+Le scheduler intervient **deux fois moins** qu'en V1 (où le LR partait trop haut) :
+
+1. **Epoch 22** : val_loss stagne pendant 6 epochs après le record de 0.3777 (epoch 16) → LR divisé par 2 (3e-05 → 1.5e-05)
+2. Résultat immédiat : epoch 23 atteint un **nouveau record** (89.71%), confirmant que le scheduler a fait le bon choix
+
+Avec le `ReduceLROnPlateau` adaptatif (au lieu du `CosineAnnealingLR` de V3 qui poussait le LR à 1e-6 trop tôt), le modèle garde un LR utile tant qu'il progresse.
+
+#### Écart train/val
+
+L'écart train acc - val acc reste faible : **~2%** (91% vs 89%). C'est un signe de bonne généralisation — le modèle ne surapprend pas. Les augmentations (mixup 30%, ColorJitter, GaussianBlur, label smoothing 0.1) font leur travail de régularisation.
+
+Comparaison avec V1 (ResNet18, lr=0.0002) qui avait un écart de **28%** à l'epoch 5 :
+
+| | V1 (ResNet18) | V4 (EfficientNet-B0) |
+|---|---|---|
+| Écart max train/val | 28% (epoch 5) | 4% (epoch 28) |
+| Cause de l'écart | LR trop élevé, pas d'augmentation | Régularisation efficace |
+| Val acc finale | 65% | 89.71% |
+
+### Leçons apprises de V4
+
+#### 1. Un bug d'une ligne peut ruiner 20h de GPU
+
+Le bug V3 (`return` mal indenté dans `set_trainable_up_to()`) a coûté **20h de calcul GPU** et plafonné les performances à 73% au lieu de 90%.
+
+**Comment on aurait pu l'éviter** : un test unitaire de 3 lignes après l'unfreeze :
+```python
+model.set_trainable_up_to(False, layername=None)
+trainable = sum(p.requires_grad for p in model.parameters())
+assert trainable == total_params, f"Seulement {trainable}/{total_params} params dégelés"
 ```
 
-**Relancer l'entraînement V4** (après git pull) :
-```bash
-git pull origin main
-cp checkpoints/best_model.pth checkpoints/best_model_v3.pth
-sbatch scripts/submit_train_optimized.sh
-```
+**Leçon** : sur un cluster GPU (ressource rare et partagée), un test rapide avant de lancer un job de 20h est toujours rentable. Le coût d'un test = 2 secondes. Le coût du bug = 20 heures + diagnostic + relance.
+
+#### 2. Le diagnostic par les métriques
+
+Le pattern `train_acc < val_acc` est un signal d'alarme spécifique :
+- **train > val** (classique) = overfitting → ajouter de la régularisation
+- **train < val** (inhabituel) = underfitting → le modèle ne peut pas apprendre → chercher un bug dans le pipeline d'entraînement (données corrompues, couches gelées, gradient qui ne passe pas)
+
+Ce pattern a été la clé pour identifier que le backbone ne s'entraînait pas.
+
+#### 3. ReduceLROnPlateau vs CosineAnnealingLR
+
+| | CosineAnnealingLR (V3) | ReduceLROnPlateau (V4) |
+|---|---|---|
+| Comportement | LR suit un cosinus prédéfini | LR baisse quand la val loss stagne |
+| Problème | Pousse le LR à 1e-6 dès epoch 40, même si le modèle apprenait encore | - |
+| Avantage | Prévisible, pas de paramètre à tuner | S'adapte au rythme réel d'apprentissage |
+| Résultat | LR trop faible trop tôt → stagnation prématurée | LR utile tant que le modèle progresse |
+
+**Recommandation** : pour un premier entraînement (quand on ne connaît pas la dynamique du modèle), `ReduceLROnPlateau` est plus sûr. `CosineAnnealingLR` est utile quand on connaît déjà le nombre optimal d'epochs.
+
+#### 4. L'importance du freeze/unfreeze progressif
+
+La stratégie en 2 phases (5 epochs classifier gelé → unfreeze tout) a bien fonctionné :
+- **Epochs 1-5** : le classifier apprend à utiliser les features ImageNet existantes (65% → 67%)
+- **Epoch 6+** : le backbone s'ajuste pour détecter les artefacts de deepfake (67% → 88% en 4 epochs)
+
+Sans freeze initial, le classifier aléatoire envoie des gradients incohérents dans le backbone → les features pré-entraînées sont détruites avant d'être utiles. Le freeze protège ces features pendant que le classifier s'initialise.
 
 ---
 
 ## V5 : EfficientNet-B4 + faces pré-extraites
 
-- **Date** : 2026-06-22
+- **Date** : 2026-06-22 (préparation) → 2026-06-23 (corrections)
 
 ### Motivations
 
-1. **EfficientNet-B4** (19M params) au lieu de B0 (5.3M params) — le benchmark FaceForensics++ montre B4 à 78% vs B0 en dessous. Plus de capacité = meilleures features.
+1. **EfficientNet-B4** (19M params) au lieu de B0 (5.3M params) — le benchmark FaceForensics++ montre B4 nettement au-dessus de B0. Plus de capacité = meilleures features pour distinguer les artefacts subtils.
 
-2. **Pré-extraction des visages sur disque** — au lieu d'exécuter le détecteur de visages à chaque frame à chaque epoch (~1400s/epoch), on extrait 30 faces par vidéo une seule fois (~1h). Les epochs passent à ~200-300s, ce qui permet d'itérer 5-7x plus vite.
+2. **Pré-extraction des visages sur disque** — au lieu d'exécuter le détecteur de visages à chaque frame à chaque epoch (~1400s/epoch), on extrait 30 faces par vidéo une seule fois (~2h). Les epochs passent à ~200-300s, ce qui permet d'itérer 5-7x plus vite.
 
 3. **Plus de données** — 30 faces/vidéo × 2160 vidéos = 64,800 images train (vs 10,800 avec frames_per_video=5).
 
 ### Fichiers modifiés/créés
 
-- `src/models/models.py` — ajout EfficientNet-B4 comme choix de modèle
-- `src/data/dataset.py` — paramètre `faces_dir` pour charger les visages pré-extraits
+- `src/models/models.py` — ajout EfficientNet-B4 comme choix de modèle (input 299×299)
+- `src/data/dataset.py` — paramètre `faces_dir` pour charger les visages pré-extraits (JPEG)
 - `src/train.py` — argument `--faces_dir` et `--model efficientnet_b4`
-- `scripts/extract_faces.py` — script de pré-extraction (30 faces/vidéo, frames équidistantes)
+- `scripts/extract_faces.py` — script de pré-extraction (30 faces/vidéo, frames équidistantes, logique de resume intégrée)
 - `scripts/submit_train_v5.sh` — script SLURM (extraction + entraînement)
+- `scripts/submit_extract_faces.sh` — script SLURM extraction seule
 
-### Commandes
+### Problème rencontré : extraction coupée par le time limit
+
+**Job 860234** (extraction des faces) a été tué à **56%** (1219/2160 vidéos) après 3h :
+
+```
+Extraction:  56%|█████▋    | 1219/2160 [2:59:57<1:44:33,  6.67s/it]
+slurmstepd: error: *** JOB 860234 ON nodemm01 CANCELLED AT 2026-06-23T04:07:05 DUE TO TIME LIMIT ***
+```
+
+**Cause** : `submit_extract_faces.sh` avait `--time=03:00:00` (3h), mais l'extraction de 2160 vidéos à 6.67s/vidéo nécessite ~4h.
+
+**Calcul qu'on aurait dû faire avant de lancer** : 2160 vidéos × 6.67s/vidéo = 14,407s ≈ **4h**. Avec une marge de sécurité → 6h minimum.
+
+**État après le crash** : extraction partielle sur le disque :
+- `data/faces/c23/original/` : 408/720 vidéos extraites
+- `data/faces/c23/Deepfakes/` : 203/~360 vidéos extraites
+- Les autres méthodes : partiellement extraites
+
+### Corrections appliquées (2026-06-23)
+
+**2 changements ciblés :**
+
+1. **`scripts/submit_extract_faces.sh`** : time limit augmenté de 3h à **6h** (`--time=06:00:00`)
+
+2. **`scripts/submit_train_v5.sh`** : supprimé le `if [ ! -d "data/faces/c23/original" ]` qui skipait l'extraction si le dossier existait. Problème : le crash avait créé le dossier avec des données incomplètes, donc V5 aurait entraîné sur 56% des faces sans s'en rendre compte.
+
+   L'extraction tourne maintenant **systématiquement** avant l'entraînement. Grâce à la logique de resume dans `extract_faces.py` (qui skip les vidéos déjà extraites), relancer est rapide : seules les ~941 vidéos restantes seront traitées (~1.5h au lieu de 4h).
+
+**Leçon** : toujours calculer le temps nécessaire avant de configurer le `--time` SLURM. Et ne jamais se fier à l'existence d'un dossier pour décider si une étape est terminée — vérifier le contenu ou utiliser un flag de completion.
+
+### Commandes de lancement
 
 ```bash
+# Sur le cluster, après que V4 ait fini
 git pull origin dev/training-pipeline
+cp checkpoints/best_model.pth checkpoints/best_model_v4.pth
 sbatch scripts/submit_train_v5.sh
 ```
 
-Le script SLURM extrait les faces automatiquement s'il ne les trouve pas, puis lance l'entraînement.
+### Optimisations V5 après audit (2026-06-23)
+
+Avant de lancer V5, un audit approfondi du code et une recherche dans la littérature ont révélé **un bug critique** et plusieurs optimisations manquantes.
+
+#### Référence : DeepfakeBench (NeurIPS 2023)
+
+**Notre cible à battre** : le benchmark [DeepfakeBench](https://github.com/SCLBD/DeepfakeBench) ([paper](https://proceedings.neurips.cc/paper_files/paper/2023/file/0e735e4b4f07de483cbe250130992726-Paper-Datasets_and_Benchmarks.pdf)) évalue EfficientNet-B4 sur FF++ c23 et obtient :
+
+| Détecteur | AUC sur FF++ c23 |
+|-----------|-----------------|
+| UCF (Xception) | 0.9705 |
+| Xception | 0.9637 |
+| **EfficientNet-B4** | **0.9567** |
+
+**Config DeepfakeBench** : Adam, lr=0.0002, batch=32, 32 frames/vidéo, résolution 256×256, A100 80GB.
+
+Notre objectif : **dépasser 0.9567 AUC** avec notre pipeline qui a des avantages que DeepfakeBench n'utilise pas (freeze/unfreeze progressif, mixup, label smoothing, augmentations avancées, face extraction avec marge généreuse).
+
+Sources :
+- [DeepfakeBench GitHub](https://github.com/SCLBD/DeepfakeBench)
+- [DeepfakeBench Paper (NeurIPS 2023)](https://proceedings.neurips.cc/paper_files/paper/2023/file/0e735e4b4f07de483cbe250130992726-Paper-Datasets_and_Benchmarks.pdf)
+- [DeepfakeBench ar5iv (tables complètes)](https://ar5iv.labs.arxiv.org/html/2307.01426)
+- [Keras EfficientNet fine-tuning guide](https://keras.io/examples/vision/image_classification_efficientnet_fine_tuning/)
+- [PyTorch Forums - BatchNorm freeze](https://discuss.pytorch.org/t/finetuning-pretrained-networks-with-batchnorm/4121)
+- [EfficientNet-B4 deepfake detection (ResearchGate)](https://www.researchgate.net/publication/378157870_Using_the_CNN_architecture_based_on_the_EfficientNetB4_model_to_efficiently_detect_Deepfake_images)
+
+#### Bug critique : BatchNorm pas vraiment gelé
+
+**Problème** : `model.train()` est appelé à chaque epoch (`train.py:47`), ce qui met **toutes** les couches BatchNorm en mode training. Même avec `requires_grad=False`, les buffers `running_mean` et `running_var` sont mis à jour.
+
+**Conséquence** : pendant les epochs de freeze (classifier seul), les statistiques BatchNorm d'ImageNet — soigneusement apprises sur 14 millions d'images — sont **corrompues** par notre dataset de ~65k faces. Quand le backbone est ensuite unfreeezé, il part de stats BatchNorm dégradées au lieu des stats ImageNet originales.
+
+**Fix** (`src/models/models.py`) : ajout d'une méthode `freeze_bn()` :
+```python
+def freeze_bn(self):
+    for module in self.model.modules():
+        if isinstance(module, (nn.BatchNorm2d, nn.BatchNorm1d)):
+            module.eval()
+```
+
+Appelée dans `train_one_epoch()` juste après `model.train()`. Les couches BatchNorm restent en mode eval pendant tout l'entraînement (y compris après l'unfreeze), utilisant les statistiques ImageNet pré-calculées au lieu de stats de batch bruités.
+
+**Pourquoi garder BN en eval même après l'unfreeze ?** Avec batch_size=16, les statistiques de batch sont bruitées (calculées sur seulement 16 images). Les running stats d'ImageNet (calculées sur des millions d'images) sont plus fiables. C'est la pratique recommandée pour le fine-tuning avec des petits batch sizes ([source](https://discuss.pytorch.org/t/finetuning-pretrained-networks-with-batchnorm/4121)).
+
+#### Gradient clipping
+
+**Problème** : quand le backbone se défreeze (epoch 3 en V5), les gradients venant du classifier déjà entraîné peuvent être énormes et déstabiliser les poids pré-entraînés.
+
+**Fix** (`src/train.py`) : ajout de `torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)` après `loss.backward()`. Les gradients sont clippés à une norme maximale de 1.0, empêchant les mises à jour explosives.
+
+#### Paramètres ajustés pour le dataset 6× plus gros
+
+Avec les faces pré-extraites, chaque epoch contient ~64,800 samples (30 faces × 2160 vidéos) au lieu de 10,800 (5 frames × 2160 vidéos). Ça change la dynamique d'apprentissage :
+
+| Paramètre | V4 | V5 | Raison |
+|-----------|----|----|--------|
+| **batch_size** | 32 | **16** | B4 (19M params) à 299×299 sur RTX 3090 (24GB) → OOM probable avec 32 |
+| **lr** | 3e-05 | **2e-05** | B4 est plus sensible aux grands LR (plus de params) |
+| **freeze_epochs** | 5 (hardcodé) | **2** (CLI) | 2 epochs × 4050 steps = 8100 steps de classifier (vs 10,125 en V4). Suffisant. |
+| **warmup_epochs** | 3 (hardcodé) | **1** (CLI) | 1 epoch × 4050 steps = 4050 steps de warmup (vs 6075). Proportionnel. |
+| **gradient clipping** | non | **max_norm=1.0** | Stabilité à l'unfreeze |
+| **BN freeze** | non | **oui** | Préserve stats ImageNet |
+
+`freeze_epochs` et `warmup_epochs` sont maintenant des arguments CLI (au lieu d'être hardcodés), ce qui permet de les ajuster sans modifier le code.
+
+#### Config finale V5
+
+```bash
+python3 -m src.train \
+    --data_root data \
+    --faces_dir data/faces \
+    --compression c23 \
+    --model efficientnet_b4 \
+    --dropout 0.5 \
+    --epochs 50 \
+    --batch_size 16 \
+    --lr 0.00002 \
+    --weight_decay 5e-4 \
+    --patience 20 \
+    --freeze_epochs 2 \
+    --warmup_epochs 1 \
+    --num_workers 8
+```
 
 ### Résultats attendus
 
-- Epochs ~200-300s (vs 1400s en V3/V4)
-- Val acc finale : 85-90%
-- Durée totale : ~1h extraction + ~3-4h entraînement
+- **Extraction** : ~1.5h (resume des ~941 vidéos restantes)
+- **Entraînement** : ~3-5h (epochs de ~200-300s grâce aux faces pré-extraites)
+- **Val acc finale** : 93-96% / AUC > 0.9567 (objectif : battre DeepfakeBench)
+- **Durée totale** : ~5-7h
+
+### Nos avantages par rapport à DeepfakeBench
+
+| | DeepfakeBench | Notre pipeline |
+|---|---|---|
+| Freeze/unfreeze | Non | Oui (2 epochs freeze → unfreeze progressif) |
+| BatchNorm freeze | Non mentionné | Oui (stats ImageNet préservées) |
+| Mixup | Non | Oui (alpha=0.4, p=0.3) |
+| Label smoothing | Non | Oui (0.1) |
+| Gradient clipping | Non | Oui (max_norm=1.0) |
+| Augmentations | Flip, rotation, JPEG, blur, brightness, FancyPCA | Flip, rotation, ColorJitter, JPEG, blur, GaussianNoise, CutOut, Grayscale |
+| Résolution | 256×256 | 299×299 (plus de détails) |
+| Face crop margin | 1.3× | 1.6× (plus de contexte autour du visage) |
+| LR scheduler | Non mentionné | ReduceLROnPlateau (adaptatif) |
+| Warmup | Non | Oui (1 epoch, 1e-6 → 2e-5) |
+
+### Récapitulatif de l'évolution du projet
+
+| Version | Modèle | Val acc | Problème principal | Durée |
+|---------|--------|---------|-------------------|-------|
+| V1 | ResNet18 | 65% | LR trop élevé → overfitting sévère (écart 28%) | ~12h |
+| V2 | ResNet18 (optimisé) | ~89% | Bonne baseline, mais capacité limitée du modèle | ~10h |
+| V3 | EfficientNet-B0 | 73.81% | Bug unfreeze → backbone gelé → underfitting | 20h |
+| V4 | EfficientNet-B0 (fixé) | **89.71%** | Plateau à ~90%, limite de capacité du B0 | ~16h |
+| V5 | EfficientNet-B4 (optimisé) | **93-96%** (estimé) | À lancer | ~6h estimé |
+
+**Progression totale** : 65% → 90% → 95% (estimé), soit **+30 points d'accuracy** en 5 itérations.
+
+**Temps GPU total consommé** : ~58h (dont 20h perdues sur le bug V3).
+
+**Point clé pour le rapport** : chaque version a apporté une leçon — V1 sur l'overfitting et le learning rate, V2 sur l'optimisation des hyperparamètres, V3 sur l'importance des tests unitaires et du diagnostic par les métriques, V4 sur le choix du scheduler, V5 sur le fine-tuning correct des BatchNorm et l'audit de la littérature. L'amélioration n'est pas seulement venue du modèle plus gros, mais de la compréhension progressive du problème.

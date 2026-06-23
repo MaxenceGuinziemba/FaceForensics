@@ -45,6 +45,7 @@ def plot_training_curves(train_losses, val_losses, train_accs, val_accs, output_
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
+    model.freeze_bn()
     running_loss = 0.0
     correct = 0
     total = 0
@@ -68,6 +69,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         running_loss += loss.item() * frames.size(0)
@@ -151,11 +153,10 @@ def main(args):
     best_val_acc = 0.0
     epochs_without_improvement = 0
     history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
-    warmup_epochs = 3
+    warmup_epochs = args.warmup_epochs
     warmup_lr_start = 1e-6
 
-    # Freeze: seul le classifier est entraîné pendant les 5 premières epochs
-    freeze_epochs = 5
+    freeze_epochs = args.freeze_epochs
     model.set_trainable_up_to(False)
     print(f'Freeze: epochs 1-{freeze_epochs} (classifier only), puis unfreeze all')
 
@@ -249,6 +250,8 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--faces_dir', type=str, default=None,
                         help='Dossier des visages pré-extraits (skip face detection on-the-fly)')
+    parser.add_argument('--freeze_epochs', type=int, default=5)
+    parser.add_argument('--warmup_epochs', type=int, default=3)
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
     parser.add_argument('--log_dir', type=str, default='logs')
     args = parser.parse_args()

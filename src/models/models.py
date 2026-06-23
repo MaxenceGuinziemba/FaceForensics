@@ -122,6 +122,11 @@ class TransferModel(nn.Module):
                 for param in self.model.fc.parameters():
                     param.requires_grad = True
 
+    def freeze_bn(self):
+        for module in self.model.modules():
+            if isinstance(module, (nn.BatchNorm2d, nn.BatchNorm1d)):
+                module.eval()
+
     def forward(self, x):
         x = self.model(x)
         return x

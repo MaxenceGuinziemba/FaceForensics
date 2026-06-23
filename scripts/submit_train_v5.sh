@@ -38,10 +38,12 @@ python3 -m src.train \
     --model efficientnet_b4 \
     --dropout 0.5 \
     --epochs 50 \
-    --batch_size 32 \
-    --lr 0.00003 \
+    --batch_size 16 \
+    --lr 0.00002 \
     --weight_decay 5e-4 \
     --patience 20 \
+    --freeze_epochs 2 \
+    --warmup_epochs 1 \
     --num_workers 8 \
     --checkpoint_dir checkpoints \
     --log_dir logs/tensorboard
