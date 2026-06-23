@@ -55,8 +55,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, freeze_bn=False
         frames = frames.to(device)
         labels = labels.to(device)
 
-        if random.random() < 0.3:
-            frames, labels_a, labels_b, lam = mixup_data(frames, labels, alpha=0.4, device=device)
+        if random.random() < 0.2:
+            frames, labels_a, labels_b, lam = mixup_data(frames, labels, alpha=0.2, device=device)
             outputs = model(frames)
             loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
             _, predicted = torch.max(outputs, 1)
@@ -142,8 +142,33 @@ def main(args):
         num_workers=args.num_workers, pin_memory=True,
     )
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    num_real = sum(1 for _, label in train_dataset.samples if label == 0)
+    num_fake = sum(1 for _, label in train_dataset.samples if label == 1)
+    weight_real = len(train_dataset.samples) / (2 * num_real)
+    weight_fake = len(train_dataset.samples) / (2 * num_fake)
+    class_weights = torch.tensor([weight_real, weight_fake], device=device)
+    print(f'Class weights: real={weight_real:.3f}, fake={weight_fake:.3f} (ratio {num_fake/num_real:.1f}:1)')
+
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
+
+    if args.differential_lr:
+        backbone_params = []
+        classifier_params = []
+        for name, param in model.named_parameters():
+            if 'classifier' in name or 'last_linear' in name or 'fc' in name:
+                classifier_params.append(param)
+            else:
+                backbone_params.append(param)
+        optimizer = torch.optim.Adam([
+            {'params': backbone_params, 'lr': args.lr * args.backbone_lr_factor},
+            {'params': classifier_params, 'lr': args.lr},
+        ], weight_decay=args.weight_decay)
+        print(f'Differential LR: backbone={args.lr * args.backbone_lr_factor:.2e}, classifier={args.lr:.2e}')
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+    for pg in optimizer.param_groups:
+        pg['initial_lr'] = pg['lr']
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-7,
     )
@@ -168,12 +193,15 @@ def main(args):
     for epoch in range(1, args.epochs + 1):
         if epoch == freeze_epochs + 1:
             model.set_trainable_up_to(False, layername=None)
-            print('  → Unfreeze: toutes les couches sont maintenant entraînables')
+            trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total = sum(p.numel() for p in model.parameters())
+            print(f'  → Unfreeze: {trainable:,}/{total:,} params trainable')
+            assert trainable > 1_000_000, f"Bug: seulement {trainable} params dégelés!"
         if epoch <= warmup_epochs:
             warmup_factor = epoch / warmup_epochs
-            warmup_lr = warmup_lr_start + (args.lr - warmup_lr_start) * warmup_factor
             for param_group in optimizer.param_groups:
-                param_group['lr'] = warmup_lr
+                target_lr = param_group.get('initial_lr', args.lr)
+                param_group['lr'] = warmup_lr_start + (target_lr - warmup_lr_start) * warmup_factor
         start_time = time.time()
 
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, freeze_bn=args.freeze_bn)
@@ -188,12 +216,17 @@ def main(args):
         history['val_acc'].append(val_acc)
 
         elapsed = time.time() - start_time
-        current_lr = optimizer.param_groups[0]['lr']
+        current_lr = optimizer.param_groups[-1]['lr']
+
+        lr_str = f'lr: {current_lr:.1e}'
+        if args.differential_lr:
+            backbone_lr = optimizer.param_groups[0]['lr']
+            lr_str = f'lr: {backbone_lr:.1e}/{current_lr:.1e}'
 
         print(f'Epoch {epoch:3d}/{args.epochs} | '
               f'Train loss: {train_loss:.4f} acc: {train_acc:.4f} | '
               f'Val loss: {val_loss:.4f} acc: {val_acc:.4f} | '
-              f'lr: {current_lr:.1e} | '
+              f'{lr_str} | '
               f'{elapsed:.0f}s')
 
         writer.add_scalars('Loss', {'train': train_loss, 'val': val_loss}, epoch)
@@ -254,6 +287,8 @@ if __name__ == '__main__':
     parser.add_argument('--freeze_epochs', type=int, default=5)
     parser.add_argument('--warmup_epochs', type=int, default=3)
     parser.add_argument('--freeze_bn', action='store_true', default=False)
+    parser.add_argument('--differential_lr', action='store_true', default=False)
+    parser.add_argument('--backbone_lr_factor', type=float, default=0.1)
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
     parser.add_argument('--log_dir', type=str, default='logs')
     args = parser.parse_args()

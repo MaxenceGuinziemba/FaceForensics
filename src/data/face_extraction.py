@@ -38,7 +38,7 @@ def get_detector():
     return _net
 
 
-def extract_face(frame, margin=0.3, min_confidence=0.7):
+def extract_face(frame, margin=0.15, min_confidence=0.7):
     net = get_detector()
     h, w = frame.shape[:2]
 

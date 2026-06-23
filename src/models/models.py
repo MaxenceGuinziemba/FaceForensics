@@ -153,7 +153,7 @@ def model_selection(modelname, num_out_classes,
     elif modelname == 'efficientnet_b4':
         return TransferModel(modelchoice='efficientnet_b4', dropout=dropout,
                              num_out_classes=num_out_classes), \
-               299, True, ['image'], None
+               380, True, ['image'], None
     else:
         raise NotImplementedError(modelname)
 

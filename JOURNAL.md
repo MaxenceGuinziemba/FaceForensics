@@ -909,11 +909,20 @@ if layername is None:
 | 17-21 | ↘ 0.37 | ↗ 90% | ~0.40 | ~88% | 3.0e-05 | Val loss stagne 5 epochs |
 | **22** | 0.3758 | 89.31% | 0.3993 | 87.67% | **1.5e-05** | **Scheduler ÷2** |
 | **23** | 0.3589 | 90.51% | 0.3801 | **89.71%** | 1.5e-05 | **Nouveau best** ✅ |
-| 24-26 | ~0.36 | ~91% | ~0.38 | ~89% | 1.5e-05 | Stabilisation |
-| 27 | 0.3546 | 90.71% | 0.3781 | 89.67% | 1.5e-05 | Proche du record |
-| 28 | 0.3681 | 89.63% | 0.4152 | 86.76% | 1.5e-05 | Spike négatif (bruit) |
+| 24 | 0.3585 | 90.55% | 0.3783 | 89.00% | 1.5e-05 | |
+| 25 | 0.3539 | 91.02% | 0.3695 | 89.24% | 1.5e-05 | |
+| 26 | 0.3564 | 90.72% | 0.3832 | 88.90% | 1.5e-05 | |
+| 27 | 0.3546 | 90.71% | 0.3781 | 89.67% | 1.5e-05 | |
+| 28 | 0.3681 | 89.63% | 0.4152 | 86.76% | 1.5e-05 | Spike négatif |
+| 29 | 0.3576 | 90.46% | 0.3984 | 88.33% | 1.5e-05 | |
+| 30 | 0.3553 | 90.82% | 0.3833 | 89.48% | 1.5e-05 | |
+| **31** | 0.3515 | 90.86% | 0.3890 | 88.71% | **7.5e-06** | **Scheduler ÷2** (2e intervention) |
+| 32 | 0.3467 | 91.31% | 0.3844 | 88.19% | 7.5e-06 | |
+| 33 | 0.3515 | 90.85% | 0.3732 | 89.14% | 7.5e-06 | |
+| 34 | - | - | - | - | 7.5e-06 | **Arrêt forcé** |
 
 **Meilleur modèle sauvegardé** : epoch 23, val_acc = **89.71%**, val_loss = 0.3801
+**Arrêt** : epoch 34 (forcé manuellement, early stopping aurait déclenché ~epoch 43)
 
 ### Analyse V4 : le fix du bug a tout changé
 
@@ -936,12 +945,14 @@ En V4, tous les paramètres du backbone sont dégelés. Le modèle peut maintena
 
 #### Comportement du scheduler ReduceLROnPlateau
 
-Le scheduler intervient **deux fois moins** qu'en V1 (où le LR partait trop haut) :
+Le scheduler intervient **deux fois** pendant l'entraînement V4 :
 
 1. **Epoch 22** : val_loss stagne pendant 6 epochs après le record de 0.3777 (epoch 16) → LR divisé par 2 (3e-05 → 1.5e-05)
 2. Résultat immédiat : epoch 23 atteint un **nouveau record** (89.71%), confirmant que le scheduler a fait le bon choix
+3. **Epoch 31** : val_loss stagne à nouveau pendant 6 epochs → LR divisé par 2 (1.5e-05 → 7.5e-06)
+4. Résultat : epochs 31-33 n'améliorent pas le record → le modèle a atteint son plateau
 
-Avec le `ReduceLROnPlateau` adaptatif (au lieu du `CosineAnnealingLR` de V3 qui poussait le LR à 1e-6 trop tôt), le modèle garde un LR utile tant qu'il progresse.
+Avec le `ReduceLROnPlateau` adaptatif (au lieu du `CosineAnnealingLR` de V3 qui poussait le LR à 1e-6 trop tôt), le modèle garde un LR utile tant qu'il progresse. L'arrêt forcé à epoch 34 était justifié : le modèle n'aurait plus progressé (early stopping aurait déclenché vers epoch 43).
 
 #### Écart train/val
 
@@ -1165,6 +1176,206 @@ python3 -m src.train \
 | LR scheduler | Non mentionné | ReduceLROnPlateau (adaptatif) |
 | Warmup | Non | Oui (1 epoch, 1e-6 → 2e-5) |
 
+### Résultats V5 (Job 861281 - en cours au 2026-06-23)
+
+**Cluster** : gpu-gw.enst.fr, RTX 3090 24GB
+**Config** : EfficientNet-B4, lr=1e-05, dropout=0.5, batch_size=16, 30 faces/vidéo, freeze_epochs=5, warmup_epochs=3, BN freeze désactivé (commit ced81d4)
+
+| Epoch | Train loss | Train acc | Val loss | Val acc | LR | Observation |
+|-------|------------|-----------|----------|---------|-----|-------------|
+| 16 | 0.3553 | 90.39% | 0.3532 | 90.54% | 1.0e-05 | **Nouveau best** |
+| 17 | 0.3479 | 90.81% | 0.3797 | 89.58% | 1.0e-05 | |
+| 18 | 0.3419 | 91.23% | 0.3700 | 89.93% | 1.0e-05 | |
+| **19** | 0.3396 | 91.38% | 0.3567 | **90.93%** | 1.0e-05 | **Meilleur modèle** |
+| 20 | 0.3397 | 91.29% | 0.3686 | 90.71% | 1.0e-05 | |
+| 21 | 0.3409 | 91.21% | 0.3783 | 89.11% | 1.0e-05 | |
+| 22 | 0.3356 | 91.58% | 0.4131 | 88.20% | **5.0e-06** | **Scheduler ÷2** |
+| 23 | 0.3298 | 91.89% | 0.3607 | 90.69% | 5.0e-06 | |
+| 24 | 0.3276 | 92.05% | 0.3979 | 89.09% | 5.0e-06 | |
+| 25 | 0.3282 | 91.96% | 0.3765 | 89.90% | 5.0e-06 | |
+| 26 | 0.3265 | 92.24% | 0.4079 | 88.68% | 5.0e-06 | Oscillations |
+
+**Meilleur modèle** : epoch 19, val_acc = **90.93%**, val_loss = 0.3567
+
+### Analyse V5 : pourquoi ça plafonne à 91%
+
+Le passage de B0 (5.3M params) à B4 (19M params) n'a apporté que **+1.22%** (89.71% → 90.93%). C'est décevant par rapport aux 93-96% attendus. Causes identifiées par audit approfondi :
+
+1. **BN freeze désactivé** : le flag `--freeze_bn` n'était pas passé dans `submit_train_v5.sh` (commit ced81d4 l'a rendu optionnel avec `default=False`). Avec batch_size=16, les statistiques de batch sont bruitées → oscillations de 3% entre epochs (88.2% → 90.9%).
+
+2. **Résolution incorrecte** : `IMAGE_SIZE = 299` hardcodé dans `transforms.py` alors que B4 natif = 380×380. Le modèle recevait des images sous-dimensionnées → perte de détails fins.
+
+3. **Pas de class weighting** : ratio real:fake de 1:4 non compensé. Le paper FaceForensics++ utilise explicitement des class weights.
+
+4. **Augmentations trop agressives** : rotation 15°, GaussianBlur σ=1.0, 2 trous CutOut de 40px → destruction des artefacts de deepfake subtils que le modèle doit détecter.
+
+5. **Face margin trop large** : margin=0.3 (1.6× total) vs paper 1.3× → trop de background inutile.
+
+6. **LR uniforme** : backbone et classifier au même LR → features ImageNet potentiellement dégradées trop vite.
+
+---
+
+## V6 : Configuration Ultime — EfficientNet-B4 Optimisé
+
+- **Date** : 2026-06-23
+
+### Motivations
+
+Audit approfondi du paper FaceForensics++ (ar5iv.labs.arxiv.org/html/1901.08971) et comparaison systématique avec notre pipeline. Objectif : combler l'écart entre V5 (90.93%) et le paper (95.91%) en corrigeant tous les problèmes identifiés.
+
+### Référence Paper FaceForensics++ (Table 5, c23)
+
+XceptionNet (23M params) entraîné sur toutes les méthodes :
+
+| Méthode | Accuracy |
+|---------|---------|
+| Deepfakes | 97.49% |
+| Face2Face | 97.69% |
+| FaceSwap | 96.79% |
+| NeuralTextures | 92.19% |
+| Pristine | 95.41% |
+| **Moyenne** | **95.91%** |
+
+**Config paper** : Adam, lr=0.0002, batch=32, **270 frames/vidéo train**, 100 val/test, **class weights 1:4**, freeze 3 epochs FC → 15 epochs full, face crop **1.3×**
+
+### Changements V6 (6 modifications)
+
+#### 1. Résolution native B4 : 299×299 → 380×380
+
+**Fichiers** : `src/data/transforms.py` (IMAGE_SIZE), `src/models/models.py` (model_selection)
+
+EfficientNet-B4 est conçu pour des entrées 380×380. Le utiliser à 299×299 revient à sous-exploiter sa capacité — les couches finales reçoivent des feature maps plus petites et perdent des détails spatiaux. Le paper utilise XceptionNet à 299×299 (sa résolution native). Chaque architecture a sa résolution optimale.
+
+#### 2. Class weighting dynamique
+
+**Fichier** : `src/train.py`
+
+```python
+num_real = sum(1 for _, label in train_dataset.samples if label == 0)
+num_fake = sum(1 for _, label in train_dataset.samples if label == 1)
+weight_real = len(train_dataset.samples) / (2 * num_real)
+weight_fake = len(train_dataset.samples) / (2 * num_fake)
+class_weights = torch.tensor([weight_real, weight_fake], device=device)
+criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
+```
+
+Le paper dit explicitement : "*we solve the imbalance between real and fake images by weighing the training images correspondingly*". Sans weighting, le modèle apprend un biais vers "fake" (classe majoritaire 4:1). V4 avait déjà ce problème : 96.22% precision mais seulement 88.14% recall.
+
+#### 3. Differential Learning Rates
+
+**Fichier** : `src/train.py`
+
+Le backbone (features ImageNet) apprend à 1/10 du LR du classifier :
+- **Backbone** : lr × 0.1 = 2e-05 (préserve les features pré-entraînées)
+- **Classifier** : lr = 2e-04 (apprend rapidement la tâche real/fake)
+
+Le paper utilise lr=0.0002 uniforme sur XceptionNet. Mais avec un modèle pré-entraîné ImageNet, les couches basses (détecteurs d'edges, textures) sont déjà optimales — les modifier trop vite détruit ces features avant que le classifier puisse les exploiter. C'est ce qui causait l'overfitting en V1 (lr=0.0002 uniforme).
+
+Le differential LR résout ce dilemme : LR agressif sur le classifier (comme le paper) tout en protégeant le backbone (comme nos V4/V5 conservatrices).
+
+Le warmup a été adapté pour respecter le ratio : chaque param group warmup vers son propre `initial_lr`, pas vers un LR global.
+
+#### 4. Face margin réduite : 0.3 → 0.15
+
+**Fichier** : `src/data/face_extraction.py`
+
+Margin 0.3 = +30% de chaque côté = 1.6× la bbox du visage. Paper = 1.3×. Le surplus de contexte (background, cheveux, épaules) introduit de la variance non pertinente que le modèle doit apprendre à ignorer, gaspillant de la capacité. Les artefacts de deepfake sont concentrés à la frontière du visage — un crop plus serré maximise le ratio signal/bruit.
+
+Nécessite une **re-extraction complète** des visages dans un nouveau dossier `data/faces_v6`.
+
+#### 5. Augmentations allégées
+
+**Fichier** : `src/data/transforms.py`
+
+| Transform | V5 | V6 | Raison |
+|-----------|-----|-----|--------|
+| Rotation | 15° | **5°** | Les artefacts deepfake sont des features spatiales-fréquentielles sensibles à la rotation |
+| GaussianBlur σ=(0.1, 1.0) | Oui | **Supprimé** | σ=1.0 détruit les artefacts de compression c23, exactement ce qu'on veut détecter |
+| CutOut | 2×40, p=0.15 | **1×20, p=0.1** | 2 trous de 40px masquent 7% du visage, potentiellement les régions forensiques clés |
+| GaussianNoise std | (0.01, 0.03) | **(0.005, 0.015)** | Réduit de moitié pour préserver le signal fin |
+| Mixup | p=0.3, α=0.4 | **p=0.2, α=0.2** | Mixing plus léger, préserve la structure des artefacts |
+| JPEG, ColorJitter, Flip, Grayscale | Garder | **Garder** | Pertinents pour la tâche |
+
+Stratégie : le paper n'utilise **aucune augmentation avancée** et atteint 95.91%. Nos augmentations légères (JPEG, ColorJitter, flip) gardent l'avantage de robustesse sans détruire le signal forensique.
+
+#### 6. Assertion d'unfreeze (leçon V3)
+
+**Fichier** : `src/train.py`
+
+```python
+if epoch == freeze_epochs + 1:
+    model.set_trainable_up_to(False, layername=None)
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    print(f'Unfreeze: {trainable:,}/{total:,} params trainable')
+    assert trainable > 1_000_000, f"Bug: seulement {trainable} params dégelés!"
+```
+
+Coût : 0 secondes. Valeur : éviter 20h de GPU gaspillées (leçon V3).
+
+### Config finale V6
+
+```bash
+python3 -m src.train \
+    --data_root data \
+    --faces_dir data/faces_v6 \
+    --compression c23 \
+    --model efficientnet_b4 \
+    --dropout 0.4 \
+    --batch_size 32 \
+    --lr 0.0002 \
+    --weight_decay 1e-4 \
+    --freeze_epochs 5 \
+    --warmup_epochs 3 \
+    --freeze_bn \
+    --differential_lr \
+    --backbone_lr_factor 0.1 \
+    --epochs 50 \
+    --patience 15 \
+    --num_workers 8 \
+    --checkpoint_dir checkpoints \
+    --log_dir logs/tensorboard
+```
+
+### Comparaison V5 → V6 (changements)
+
+| Paramètre | V5 | V6 | Raison |
+|-----------|-----|-----|--------|
+| **IMAGE_SIZE** | 299 | **380** | B4 natif |
+| **Face margin** | 0.3 (1.6×) | **0.15 (1.3×)** | Comme paper |
+| **Class weights** | Non | **Oui (auto)** | Comme paper |
+| **LR** | 1e-05 (uniforme) | **2e-04 / 2e-05** | Differential LR |
+| **Batch size** | 16 | **32** | Comme paper |
+| **Dropout** | 0.5 | **0.4** | Régularisation plus légère avec gros batch |
+| **Weight decay** | 5e-4 | **1e-4** | Comme paper |
+| **Rotation** | 15° | **5°** | Préserve artefacts spatiaux |
+| **GaussianBlur** | σ=(0.1, 1.0) | **Supprimé** | Détruit signal forensique |
+| **CutOut** | 2×40, p=0.15 | **1×20, p=0.1** | Moins agressif |
+| **Mixup** | p=0.3, α=0.4 | **p=0.2, α=0.2** | Plus léger |
+| **BN freeze** | Non (oublié) | **Oui** | Flag `--freeze_bn` |
+| **Faces/vidéo** | 30 | **50** | Plus de diversité |
+| **Assertion unfreeze** | Non | **Oui** | Leçon V3 |
+
+### Résultats attendus
+
+- **Extraction** : ~8h (re-extraction complète 2580 vidéos, margin=0.15, 50 faces/vidéo)
+- **Entraînement** : ~12-16h (epochs plus longues avec batch=32 à 380×380)
+- **Val acc finale** : **94-96%** (objectif : dépasser le paper à 95.91%)
+- **Durée totale** : ~20-24h
+
+### Commandes de lancement
+
+```bash
+# Sur le cluster
+ssh mguinzie-24@gpu-gw.enst.fr
+cd ~/projects/FaceForensics
+git pull origin dev/training-pipeline
+cp checkpoints/best_model.pth checkpoints/best_model_v5.pth
+sbatch scripts/submit_train_v6.sh
+```
+
+---
+
 ### Récapitulatif de l'évolution du projet
 
 #### Résultats d'entraînement
@@ -1173,8 +1384,9 @@ python3 -m src.train \
 |---------|--------|--------|---------|----------|-----------------|-------------|-------|
 | V1 | ResNet18 | 11M | 66.21% | 0.6118 | 8/18 | 18 (early stop) | ~13h |
 | V3 | EfficientNet-B0 (bugué) | 5.3M | 73.81% | 0.5952 | 37/50 | 50 | 20h |
-| V4 | EfficientNet-B0 (fixé) | 5.3M | **89.71%** | 0.3801 | 23/33 | 33 (annulé) | ~13h |
-| V5 | EfficientNet-B4 (optimisé) | 19M | **?** | - | - | En cours | ~6h estimé |
+| V4 | EfficientNet-B0 (fixé) | 5.3M | **89.71%** | 0.3801 | 23/34 | 34 (arrêt forcé) | ~13h |
+| V5 | EfficientNet-B4 | 19M | **90.93%** | 0.3567 | 19/? | En cours | ~10h |
+| V6 | EfficientNet-B4 (optimisé) | 19M | **?** | - | - | A lancer | ~20h estimé |
 
 Note : V2 n'a pas eu de run indépendant — les recommandations V2 ont été intégrées dans V3/V4.
 
@@ -1185,8 +1397,10 @@ Note : V2 n'a pas eu de run indépendant — les recommandations V2 ont été in
 | **Accuracy** | 71.60% | **89.79%** | +18.2% |
 | **AUC** | 0.7204 | **0.9671** | +0.247 |
 | **Precision** | 71.51% | **96.22%** | +24.7% |
-| **Recall** | 95.39% | 88.14% | -7.2% |
+| **Recall** | 95.39% | **88.14%** | -7.2% |
 | **F1-Score** | 0.8174 | **0.9200** | +0.103 |
+
+Note : L'évaluation V4 a été faite sur le checkpoint de l'epoch 23 (meilleur val_acc). L'entraînement a continué jusqu'à l'epoch 34 mais est resté sur un plateau (pas d'amélioration après epoch 23).
 
 #### AUC par méthode de manipulation
 
@@ -1258,26 +1472,30 @@ NeuralTextures est la méthode la plus difficile à détecter (88.95% vs 92% pou
 
 #### Hyperparamètres par version
 
-| Paramètre | V1 | V2 | V3 | V4 | V5 |
-|-----------|----|----|----|----|-----|
-| **Modèle** | ResNet18 | ResNet18 | EfficientNet-B0 | EfficientNet-B0 | EfficientNet-B4 |
-| **LR** | 2e-04 | 5e-05 | 3e-05 | 3e-05 | 2e-05 |
-| **Batch size** | 32 | 32 | 32 | 32 | 16 |
-| **Dropout** | 0.5 | 0.6 | 0.5 | 0.5 | 0.5 |
-| **Weight decay** | 1e-4 | 1e-4 | 5e-4 | 5e-4 | 5e-4 |
-| **Frames/vidéo** | 10 | 5 | 5 | 5 | 30 (pré-extraites) |
-| **Samples/epoch** | 21,600 | 10,800 | 10,800 | 10,800 | ~64,800 |
-| **Temps/epoch** | ~45 min | ~22 min | ~24 min | ~23 min | ~4 min (estimé) |
-| **Scheduler** | ReduceLROnPlateau | ReduceLROnPlateau | CosineAnnealing | ReduceLROnPlateau | ReduceLROnPlateau |
-| **Freeze/unfreeze** | Non | Non | Oui (5 epochs) | Oui (5 epochs) | Oui (2 epochs) |
-| **Warmup** | Non | Non | Oui (3 epochs) | Oui (3 epochs) | Oui (1 epoch) |
-| **Mixup** | Non | Non | Oui (p=0.5) | Oui (p=0.3) | Oui (p=0.3) |
-| **Label smoothing** | Non | Non | Oui (0.1) | Oui (0.1) | Oui (0.1) |
-| **Face extraction** | Pas de crop | Pas de crop | On-the-fly (SSD) | On-the-fly (SSD) | Pré-extraite (JPEG) |
-| **Augmentations** | Basiques | Basiques | Avancées | Avancées | Avancées |
-| **BN freeze** | Non | Non | Non | Non | **Oui** |
-| **Gradient clipping** | Non | Non | Non | Non | **Oui (1.0)** |
-| **Early stopping** | patience=10 | patience=15 | Non | patience=20 | patience=20 |
+| Paramètre | V1 | V2 | V3 | V4 | V5 | V6 |
+|-----------|----|----|----|----|-----|-----|
+| **Modèle** | ResNet18 | ResNet18 | EfficientNet-B0 | EfficientNet-B0 | EfficientNet-B4 | EfficientNet-B4 |
+| **IMAGE_SIZE** | 299 | 299 | 299 | 299 | 299 | **380** |
+| **LR** | 2e-04 | 5e-05 | 3e-05 | 3e-05 | 1e-05 | **2e-04 / 2e-05** |
+| **Differential LR** | Non | Non | Non | Non | Non | **Oui (×0.1)** |
+| **Batch size** | 32 | 32 | 32 | 32 | 16 | **32** |
+| **Dropout** | 0.5 | 0.6 | 0.5 | 0.5 | 0.5 | **0.4** |
+| **Weight decay** | 1e-4 | 1e-4 | 5e-4 | 5e-4 | 5e-4 | **1e-4** |
+| **Class weights** | Non | Non | Non | Non | Non | **Oui (auto)** |
+| **Frames/vidéo** | 10 | 5 | 5 | 5 | 30 (pré-extraites) | **50 (pré-extraites)** |
+| **Face margin** | — | — | 0.3 (1.6×) | 0.3 (1.6×) | 0.3 (1.6×) | **0.15 (1.3×)** |
+| **Samples/epoch** | 21,600 | 10,800 | 10,800 | 10,800 | ~64,800 | **~108,000** |
+| **Scheduler** | ReduceLROnPlateau | ReduceLROnPlateau | CosineAnnealing | ReduceLROnPlateau | ReduceLROnPlateau | ReduceLROnPlateau |
+| **Freeze/unfreeze** | Non | Non | Oui (5 epochs) | Oui (5 epochs) | Oui (5 epochs) | Oui (5 epochs) |
+| **Warmup** | Non | Non | Oui (3 epochs) | Oui (3 epochs) | Oui (3 epochs) | Oui (3 epochs) |
+| **Mixup** | Non | Non | Oui (p=0.5) | Oui (p=0.3) | Oui (p=0.3) | **Oui (p=0.2, α=0.2)** |
+| **Label smoothing** | Non | Non | Oui (0.1) | Oui (0.1) | Oui (0.1) | Oui (0.1) |
+| **Face extraction** | Pas de crop | Pas de crop | On-the-fly (SSD) | On-the-fly (SSD) | Pré-extraite (JPEG) | **Pré-extraite (margin=0.15)** |
+| **Augmentations** | Basiques | Basiques | Avancées | Avancées | Avancées | **Allégées** |
+| **BN freeze** | Non | Non | Non | Non | Non (oublié) | **Oui** |
+| **Gradient clipping** | Non | Non | Non | Non | Oui (1.0) | Oui (1.0) |
+| **Assertion unfreeze** | Non | Non | Non | Non | Non | **Oui** |
+| **Early stopping** | patience=10 | patience=15 | Non | patience=20 | patience=20 | **patience=15** |
 
 #### Bugs et leçons par version
 
@@ -1287,7 +1505,7 @@ NeuralTextures est la méthode la plus difficile à détecter (88.95% vs 92% pou
 | V2 | Pas de bug, mais ResNet18 (11M params) atteint sa limite à ~89% | Val acc stagne malgré hyperparamètres optimaux | Pour aller plus loin, il faut un modèle avec plus de capacité |
 | V3 | `return` mal indenté dans `set_trainable_up_to()` → seul 1 paramètre dégelé sur des milliers | train acc (68%) < val acc (73%) = pattern d'underfitting | **Toujours tester le freeze/unfreeze avec une assertion**. Coût du bug : 20h de GPU |
 | V4 | Plateau à 90% → limite de capacité d'EfficientNet-B0 (5.3M params) | Écart train/val de 2% seulement = bonne généralisation, le modèle a donné tout ce qu'il pouvait | B0 est trop petit pour capturer les artefacts subtils de deepfake en c23 |
-| V5 | BatchNorm pas vraiment gelé (`requires_grad=False` ne suffit pas, il faut `.eval()`) | Découvert par audit de la littérature (PyTorch Forums, Keras docs) | `requires_grad=False` ne gèle que les poids, pas les running stats. **Toujours appeler `.eval()` sur les BN** |
+| V5 | BN freeze oublié (flag non passé dans script SLURM) + IMAGE_SIZE 299 au lieu de 380 + pas de class weights + augmentations trop agressives | Oscillations 3% val acc (88-91%) malgré B4 (19M params) | Toujours vérifier que **chaque flag** du code est passé dans le script. Auditer le paper original avant de choisir les hyperparamètres |
 
 #### Ce que chaque version a apporté au pipeline
 
@@ -1298,9 +1516,10 @@ NeuralTextures est la méthode la plus difficile à détecter (88.95% vs 92% pou
 | V3 | Face extraction, mixup, label smoothing, augmentations avancées, freeze/unfreeze, warmup |
 | V4 | Fix bug unfreeze, ReduceLROnPlateau adaptatif, réduction mixup (0.5 → 0.3) |
 | V5 | Modèle B4, faces pré-extraites, fix BatchNorm, gradient clipping, CLI configurable |
+| V6 | Résolution native 380×380, class weights, differential LR, margin paper (1.3×), augmentations allégées, assertion unfreeze |
 
-**Progression totale** : 65% → 90% → 95% (estimé), soit **+30 points d'accuracy** en 5 itérations.
+**Progression totale** : 65% → 91% → 95% (estimé V6), soit **+30 points d'accuracy** en 6 itérations.
 
-**Temps GPU total consommé** : ~58h (dont 20h perdues sur le bug V3).
+**Temps GPU total consommé** : ~58h (dont 20h perdues sur le bug V3). V6 estimé : +20h.
 
-**Point clé pour le rapport** : chaque version a apporté une leçon — V1 sur l'overfitting et le learning rate, V2 sur l'optimisation des hyperparamètres, V3 sur l'importance des tests unitaires et du diagnostic par les métriques, V4 sur le choix du scheduler, V5 sur le fine-tuning correct des BatchNorm et l'audit de la littérature. L'amélioration n'est pas seulement venue du modèle plus gros, mais de la compréhension progressive du problème.
+**Point clé pour le rapport** : chaque version a apporté une leçon — V1 sur l'overfitting et le learning rate, V2 sur l'optimisation des hyperparamètres, V3 sur l'importance des tests unitaires et du diagnostic par les métriques, V4 sur le choix du scheduler, V5 sur le fine-tuning des BatchNorm et l'audit de la littérature, V6 sur l'importance de reproduire fidèlement les choix du paper de référence (résolution, class weights, face margin) tout en ajoutant des améliorations ciblées (differential LR, assertion unfreeze). L'amélioration n'est pas seulement venue du modèle plus gros, mais de la compréhension progressive du problème.
