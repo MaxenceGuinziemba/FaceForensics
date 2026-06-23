@@ -1167,15 +1167,94 @@ python3 -m src.train \
 
 ### Récapitulatif de l'évolution du projet
 
-#### Résultats
+#### Résultats d'entraînement
 
-| Version | Modèle | Params | Val acc | Val loss | Meilleure epoch | Durée totale |
-|---------|--------|--------|---------|----------|-----------------|-------------|
-| V1 | ResNet18 | 11M | 65.33% | 0.6118 | 1/7 | ~12h |
-| V2 | ResNet18 (optimisé) | 11M | ~89% | ~0.37 | ~18/50 | ~10h |
-| V3 | EfficientNet-B0 | 5.3M | 73.81% | 0.5952 | 47/50 | 20h |
-| V4 | EfficientNet-B0 (fixé) | 5.3M | **89.71%** | 0.3801 | 23/50 | ~16h |
-| V5 | EfficientNet-B4 (optimisé) | 19M | **93-96%** (estimé) | - | - | ~6h estimé |
+| Version | Modèle | Params | Val acc | Val loss | Meilleure epoch | Epochs total | Durée |
+|---------|--------|--------|---------|----------|-----------------|-------------|-------|
+| V1 | ResNet18 | 11M | 66.21% | 0.6118 | 8/18 | 18 (early stop) | ~13h |
+| V3 | EfficientNet-B0 (bugué) | 5.3M | 73.81% | 0.5952 | 37/50 | 50 | 20h |
+| V4 | EfficientNet-B0 (fixé) | 5.3M | **89.71%** | 0.3801 | 23/33 | 33 (annulé) | ~13h |
+| V5 | EfficientNet-B4 (optimisé) | 19M | **?** | - | - | En cours | ~6h estimé |
+
+Note : V2 n'a pas eu de run indépendant — les recommandations V2 ont été intégrées dans V3/V4.
+
+#### Résultats d'évaluation (sur le test set, 4200 samples)
+
+| Métrique | V3 (bugué) | V4 (fixé) | Amélioration |
+|----------|-----------|-----------|-------------|
+| **Accuracy** | 71.60% | **89.79%** | +18.2% |
+| **AUC** | 0.7204 | **0.9671** | +0.247 |
+| **Precision** | 71.51% | **96.22%** | +24.7% |
+| **Recall** | 95.39% | 88.14% | -7.2% |
+| **F1-Score** | 0.8174 | **0.9200** | +0.103 |
+
+#### AUC par méthode de manipulation
+
+| Méthode | V3 | V4 | DeepfakeBench (B4) | V4 vs DeepfakeBench |
+|---------|-----|-----|-------------------|-------------------|
+| **Deepfakes** | 0.761 | **0.9797** | 0.9757 | **+0.004 (V4 gagne)** |
+| **Face2Face** | 0.722 | 0.9712 | **0.9758** | -0.005 |
+| **FaceSwap** | 0.685 | 0.9683 | **0.9797** | -0.011 |
+| **NeuralTextures** | 0.730 | **0.9458** | 0.9308 | **+0.015 (V4 gagne)** |
+| **Global** | 0.720 | **0.9671** | 0.9567 | **+0.010 (V4 gagne)** |
+
+Notre EfficientNet-B0 (5.3M params) en V4 **bat déjà** le benchmark DeepfakeBench EfficientNet-B4 (19M params) sur l'AUC global (0.9671 vs 0.9567) et sur 2 méthodes sur 4. Ceci grâce à notre pipeline (freeze/unfreeze, mixup, label smoothing, augmentations avancées, face extraction).
+
+#### Accuracy par méthode de manipulation
+
+| Méthode | V3 | V4 |
+|---------|-----|-----|
+| **Deepfakes** | 48.57% | **92.24%** |
+| **Face2Face** | 47.76% | **92.62%** |
+| **FaceSwap** | 46.86% | **91.29%** |
+| **NeuralTextures** | 46.81% | **88.95%** |
+
+NeuralTextures est la méthode la plus difficile à détecter (88.95% vs 92% pour les autres). C'est cohérent avec la littérature : NeuralTextures modifie uniquement l'expression du visage de façon très subtile, contrairement aux autres méthodes qui remplacent le visage entier.
+
+#### Analyse des matrices de confusion
+
+**V3 (bugué)** — confusion matrix : `[[336, 1064], [129, 2671]]`
+- 1064 faux positifs (76% des vidéos real classées comme fake)
+- Le modèle prédit presque tout comme "fake" → recall élevé (95%) mais precision faible (71%)
+- Le classifier head seul (backbone gelé) a appris un biais vers "fake" car les fakes sont 2× plus nombreux dans le dataset
+
+**V4 (fixé)** — confusion matrix : `[[1303, 97], [332, 2468]]`
+- Seulement 97 faux positifs (7% des real classées comme fake) vs 1064 en V3
+- 332 faux négatifs (12% des fakes passent inaperçus)
+- Bonne balance precision/recall → le backbone entraîné détecte les vrais artefacts au lieu de se baser sur un biais statistique
+
+#### Analyse des courbes d'entraînement
+
+**V1 (ResNet18)** — courbes dans `results/v1/training_curves.png`
+- Overfitting classique : train acc monte à 90%, val acc stagne à 66%
+- Val loss explose (0.6 → 1.1) pendant que train loss descend
+- Le scheduler intervient 2 fois (LR ÷10 à epoch 7, ÷10 à epoch 13) mais ne sauve pas le run
+- Early stopping à epoch 18
+
+**V3 (EfficientNet-B0 bugué)** — courbes dans `results/v3/training_curves.png`
+- Pattern d'underfitting visible : train acc (68%, bleu) SOUS val acc (73%, rouge)
+- Les deux courbes progressent très lentement et en parallèle
+- CosineAnnealingLR pousse le LR à 1.3e-06 → le modèle arrête d'apprendre
+- 50 epochs pour seulement +8% d'accuracy (65% → 73%)
+
+**V4 (EfficientNet-B0 fixé)** — courbes dans `results/v4/training_curves.png`
+- Point de rupture spectaculaire à l'**epoch 6** (unfreeze du backbone)
+- Val loss chute de 0.65 → 0.39 en 4 epochs (6-10)
+- Val acc saute de 67% → 88% en 4 epochs
+- Après epoch 16 : plateau sain avec train ≈ val (écart ~2%)
+- Scheduler ÷2 à epoch 22 → petit boost à 89.71% (epoch 23)
+
+#### Analyse des courbes ROC
+
+**V3** — courbes dans `results/v3/evaluation/roc_curves_per_method.png`
+- Toutes les courbes sont éloignées du coin haut-gauche (classifieur faible)
+- FaceSwap le pire (AUC=0.685, proche du hasard)
+- Les courbes se croisent → le modèle n'a pas appris de features discriminantes
+
+**V4** — courbes dans `results/v4/roc_curves_per_method.png`
+- Toutes les courbes épousent le coin haut-gauche (excellent classifieur)
+- Deepfakes et Face2Face quasi parfaites (AUC > 0.97)
+- NeuralTextures légèrement en retrait (AUC=0.946) mais reste très bon
 
 #### Hyperparamètres par version
 
