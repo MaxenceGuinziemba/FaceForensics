@@ -39,11 +39,11 @@ python3 -m src.train \
     --dropout 0.5 \
     --epochs 50 \
     --batch_size 16 \
-    --lr 0.00002 \
+    --lr 0.000005 \
     --weight_decay 5e-4 \
     --patience 20 \
-    --freeze_epochs 2 \
-    --warmup_epochs 1 \
+    --freeze_epochs 5 \
+    --warmup_epochs 3 \
     --num_workers 8 \
     --checkpoint_dir checkpoints \
     --log_dir logs/tensorboard
