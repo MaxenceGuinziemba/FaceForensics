@@ -23,7 +23,7 @@ echo "=========================================="
 
 # Étape 1 : extraire les faces (resume automatique si extraction partielle)
 echo "=== Extraction des visages ==="
-python3 scripts/extract_faces.py \
+python3 -m scripts.extract_faces \
     --data_root data \
     --output_dir data/faces \
     --compression c23 \
