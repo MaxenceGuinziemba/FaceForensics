@@ -1167,13 +1167,58 @@ python3 -m src.train \
 
 ### Récapitulatif de l'évolution du projet
 
-| Version | Modèle | Val acc | Problème principal | Durée |
-|---------|--------|---------|-------------------|-------|
-| V1 | ResNet18 | 65% | LR trop élevé → overfitting sévère (écart 28%) | ~12h |
-| V2 | ResNet18 (optimisé) | ~89% | Bonne baseline, mais capacité limitée du modèle | ~10h |
-| V3 | EfficientNet-B0 | 73.81% | Bug unfreeze → backbone gelé → underfitting | 20h |
-| V4 | EfficientNet-B0 (fixé) | **89.71%** | Plateau à ~90%, limite de capacité du B0 | ~16h |
-| V5 | EfficientNet-B4 (optimisé) | **93-96%** (estimé) | À lancer | ~6h estimé |
+#### Résultats
+
+| Version | Modèle | Params | Val acc | Val loss | Meilleure epoch | Durée totale |
+|---------|--------|--------|---------|----------|-----------------|-------------|
+| V1 | ResNet18 | 11M | 65.33% | 0.6118 | 1/7 | ~12h |
+| V2 | ResNet18 (optimisé) | 11M | ~89% | ~0.37 | ~18/50 | ~10h |
+| V3 | EfficientNet-B0 | 5.3M | 73.81% | 0.5952 | 47/50 | 20h |
+| V4 | EfficientNet-B0 (fixé) | 5.3M | **89.71%** | 0.3801 | 23/50 | ~16h |
+| V5 | EfficientNet-B4 (optimisé) | 19M | **93-96%** (estimé) | - | - | ~6h estimé |
+
+#### Hyperparamètres par version
+
+| Paramètre | V1 | V2 | V3 | V4 | V5 |
+|-----------|----|----|----|----|-----|
+| **Modèle** | ResNet18 | ResNet18 | EfficientNet-B0 | EfficientNet-B0 | EfficientNet-B4 |
+| **LR** | 2e-04 | 5e-05 | 3e-05 | 3e-05 | 2e-05 |
+| **Batch size** | 32 | 32 | 32 | 32 | 16 |
+| **Dropout** | 0.5 | 0.6 | 0.5 | 0.5 | 0.5 |
+| **Weight decay** | 1e-4 | 1e-4 | 5e-4 | 5e-4 | 5e-4 |
+| **Frames/vidéo** | 10 | 5 | 5 | 5 | 30 (pré-extraites) |
+| **Samples/epoch** | 21,600 | 10,800 | 10,800 | 10,800 | ~64,800 |
+| **Temps/epoch** | ~45 min | ~22 min | ~24 min | ~23 min | ~4 min (estimé) |
+| **Scheduler** | ReduceLROnPlateau | ReduceLROnPlateau | CosineAnnealing | ReduceLROnPlateau | ReduceLROnPlateau |
+| **Freeze/unfreeze** | Non | Non | Oui (5 epochs) | Oui (5 epochs) | Oui (2 epochs) |
+| **Warmup** | Non | Non | Oui (3 epochs) | Oui (3 epochs) | Oui (1 epoch) |
+| **Mixup** | Non | Non | Oui (p=0.5) | Oui (p=0.3) | Oui (p=0.3) |
+| **Label smoothing** | Non | Non | Oui (0.1) | Oui (0.1) | Oui (0.1) |
+| **Face extraction** | Pas de crop | Pas de crop | On-the-fly (SSD) | On-the-fly (SSD) | Pré-extraite (JPEG) |
+| **Augmentations** | Basiques | Basiques | Avancées | Avancées | Avancées |
+| **BN freeze** | Non | Non | Non | Non | **Oui** |
+| **Gradient clipping** | Non | Non | Non | Non | **Oui (1.0)** |
+| **Early stopping** | patience=10 | patience=15 | Non | patience=20 | patience=20 |
+
+#### Bugs et leçons par version
+
+| Version | Bug / Problème | Diagnostic | Leçon |
+|---------|---------------|------------|-------|
+| V1 | LR=2e-04 trop élevé → overfitting (train 83%, val 54%, écart 28%) | Val acc chute pendant que train acc monte | Un LR trop grand fait "sauter" les minima → le scheduler a sauvé le run en divisant par 10 |
+| V2 | Pas de bug, mais ResNet18 (11M params) atteint sa limite à ~89% | Val acc stagne malgré hyperparamètres optimaux | Pour aller plus loin, il faut un modèle avec plus de capacité |
+| V3 | `return` mal indenté dans `set_trainable_up_to()` → seul 1 paramètre dégelé sur des milliers | train acc (68%) < val acc (73%) = pattern d'underfitting | **Toujours tester le freeze/unfreeze avec une assertion**. Coût du bug : 20h de GPU |
+| V4 | Plateau à 90% → limite de capacité d'EfficientNet-B0 (5.3M params) | Écart train/val de 2% seulement = bonne généralisation, le modèle a donné tout ce qu'il pouvait | B0 est trop petit pour capturer les artefacts subtils de deepfake en c23 |
+| V5 | BatchNorm pas vraiment gelé (`requires_grad=False` ne suffit pas, il faut `.eval()`) | Découvert par audit de la littérature (PyTorch Forums, Keras docs) | `requires_grad=False` ne gèle que les poids, pas les running stats. **Toujours appeler `.eval()` sur les BN** |
+
+#### Ce que chaque version a apporté au pipeline
+
+| Version | Ajout clé |
+|---------|-----------|
+| V1 | Pipeline de base fonctionnel (train.py, dataset.py, evaluate.py, SLURM) |
+| V2 | Optimisation des hyperparamètres (LR, dropout, frames_per_video) |
+| V3 | Face extraction, mixup, label smoothing, augmentations avancées, freeze/unfreeze, warmup |
+| V4 | Fix bug unfreeze, ReduceLROnPlateau adaptatif, réduction mixup (0.5 → 0.3) |
+| V5 | Modèle B4, faces pré-extraites, fix BatchNorm, gradient clipping, CLI configurable |
 
 **Progression totale** : 65% → 90% → 95% (estimé), soit **+30 points d'accuracy** en 5 itérations.
 
