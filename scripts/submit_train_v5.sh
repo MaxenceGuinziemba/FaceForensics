@@ -21,16 +21,14 @@ echo "=========================================="
 echo "V5: EfficientNet-B4 + faces pré-extraites"
 echo "=========================================="
 
-# Étape 1 : extraire les faces (skip si déjà fait)
-if [ ! -d "data/faces/c23/original" ]; then
-    echo "=== Extraction des visages ==="
-    python3 scripts/extract_faces.py \
-        --data_root data \
-        --output_dir data/faces \
-        --compression c23 \
-        --frames_per_video 30
-    echo "=== Extraction terminée ==="
-fi
+# Étape 1 : extraire les faces (resume automatique si extraction partielle)
+echo "=== Extraction des visages ==="
+python3 scripts/extract_faces.py \
+    --data_root data \
+    --output_dir data/faces \
+    --compression c23 \
+    --frames_per_video 30
+echo "=== Extraction terminée ==="
 
 # Étape 2 : entraînement
 python3 -m src.train \

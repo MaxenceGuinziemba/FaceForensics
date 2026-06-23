@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --time=03:00:00
+#SBATCH --time=06:00:00
 
 mkdir -p logs/slurm
 source ~/venvs/faceforensics/bin/activate
