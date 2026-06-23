@@ -206,7 +206,7 @@ def plot_example_predictions(model, loader, device, output_path):
 
 
 def evaluate_per_method(model, data_root, split_path, compression,
-                        transform, device, num_frames, batch_size):
+                        transform, device, num_frames, batch_size, faces_dir=None):
     """
     Évalue le modèle séparément pour chaque méthode de manipulation.
     Permet de savoir si le modèle détecte mieux Deepfakes que NeuralTextures par exemple.
@@ -221,6 +221,7 @@ def evaluate_per_method(model, data_root, split_path, compression,
             methods=[method],
             transform=transform,
             num_frames_per_video=num_frames,
+            faces_dir=faces_dir,
         )
 
         if len(dataset.samples) == 0:
@@ -290,6 +291,7 @@ def main(args):
         compression=args.compression,
         transform=xception_default_data_transforms['test'],
         num_frames_per_video=args.frames_per_video,
+        faces_dir=args.faces_dir,
     )
 
     if len(test_dataset.samples) == 0:
@@ -302,6 +304,7 @@ def main(args):
             compression=args.compression,
             transform=xception_default_data_transforms['val'],
             num_frames_per_video=args.frames_per_video,
+            faces_dir=args.faces_dir,
         )
 
     counts = test_dataset.get_label_counts()
@@ -374,6 +377,7 @@ def main(args):
         model, args.data_root, split_path, args.compression,
         xception_default_data_transforms['test'],
         device, args.frames_per_video, args.batch_size,
+        faces_dir=args.faces_dir,
     )
 
     for method, metrics in per_method.items():
@@ -440,6 +444,8 @@ if __name__ == '__main__':
                         help='Dropout (utilisé seulement si pas dans le checkpoint)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Taille du batch')
+    parser.add_argument('--faces_dir', type=str, default=None,
+                        help='Dossier des visages pré-extraits')
     parser.add_argument('--frames_per_video', type=int, default=10,
                         help='Frames par vidéo pour l\'évaluation')
     parser.add_argument('--output_dir', type=str, default='checkpoints/evaluation',

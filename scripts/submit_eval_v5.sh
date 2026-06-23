@@ -23,9 +23,9 @@ echo "=========================================="
 python3 -m src.evaluate \
     --checkpoint checkpoints/best_model.pth \
     --data_root data \
+    --faces_dir data/faces \
     --compression c23 \
     --batch_size 32 \
-    --frames_per_video 10 \
     --output_dir checkpoints/evaluation
 
 # Sauvegarder tous les resultats V5
