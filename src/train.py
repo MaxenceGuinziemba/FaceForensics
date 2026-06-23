@@ -43,9 +43,10 @@ def plot_training_curves(train_losses, val_losses, train_accs, val_accs, output_
     plt.close()
 
 
-def train_one_epoch(model, loader, criterion, optimizer, device):
+def train_one_epoch(model, loader, criterion, optimizer, device, freeze_bn=False):
     model.train()
-    model.freeze_bn()
+    if freeze_bn:
+        model.freeze_bn()
     running_loss = 0.0
     correct = 0
     total = 0
@@ -175,7 +176,7 @@ def main(args):
                 param_group['lr'] = warmup_lr
         start_time = time.time()
 
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, freeze_bn=args.freeze_bn)
         val_loss, val_acc = validate(model, val_loader, criterion, device)
 
         if epoch > warmup_epochs:
@@ -252,6 +253,7 @@ if __name__ == '__main__':
                         help='Dossier des visages pré-extraits (skip face detection on-the-fly)')
     parser.add_argument('--freeze_epochs', type=int, default=5)
     parser.add_argument('--warmup_epochs', type=int, default=3)
+    parser.add_argument('--freeze_bn', action='store_true', default=False)
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
     parser.add_argument('--log_dir', type=str, default='logs')
     args = parser.parse_args()
