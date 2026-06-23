@@ -1197,21 +1197,78 @@ python3 -m src.train \
 
 **Meilleur modèle** : epoch 19, val_acc = **90.93%**, val_loss = 0.3567
 
-### Analyse V5 : pourquoi ça plafonne à 91%
+### Résultats d'évaluation V5 (test set, 12347 samples)
 
-Le passage de B0 (5.3M params) à B4 (19M params) n'a apporté que **+1.22%** (89.71% → 90.93%). C'est décevant par rapport aux 93-96% attendus. Causes identifiées par audit approfondi :
+| Métrique | V4 (B0, 5.3M) | V5 (B4, 19M) | Écart |
+|----------|---------------|--------------|-------|
+| **Accuracy** | **89.79%** | 88.77% | **-1.02%** |
+| **AUC** | **0.9671** | 0.9392 | **-0.028** |
+| **Precision** | **96.22%** | 90.36% | **-5.86%** |
+| **Recall** | 88.14% | **93.05%** | +4.91% |
+| **F1** | **0.9200** | 0.9168 | **-0.003** |
 
-1. **BN freeze désactivé** : le flag `--freeze_bn` n'était pas passé dans `submit_train_v5.sh` (commit ced81d4 l'a rendu optionnel avec `default=False`). Avec batch_size=16, les statistiques de batch sont bruitées → oscillations de 3% entre epochs (88.2% → 90.9%).
+**V5 est une régression par rapport à V4** malgré un modèle 3.6× plus gros.
 
-2. **Résolution incorrecte** : `IMAGE_SIZE = 299` hardcodé dans `transforms.py` alors que B4 natif = 380×380. Le modèle recevait des images sous-dimensionnées → perte de détails fins.
+#### AUC par méthode — V5 pire que V4 sur les 4
 
-3. **Pas de class weighting** : ratio real:fake de 1:4 non compensé. Le paper FaceForensics++ utilise explicitement des class weights.
+| Méthode | V4 | V5 | Écart |
+|---------|-----|-----|-------|
+| Deepfakes | **0.9797** | 0.9685 | -0.011 |
+| Face2Face | **0.9712** | 0.9436 | -0.028 |
+| FaceSwap | **0.9683** | 0.9294 | -0.039 |
+| NeuralTextures | **0.9458** | 0.9156 | -0.030 |
 
-4. **Augmentations trop agressives** : rotation 15°, GaussianBlur σ=1.0, 2 trous CutOut de 40px → destruction des artefacts de deepfake subtils que le modèle doit détecter.
+#### Accuracy par méthode
 
-5. **Face margin trop large** : margin=0.3 (1.6× total) vs paper 1.3× → trop de background inutile.
+| Méthode | V4 | V5 |
+|---------|-----|-----|
+| Deepfakes | **92.24%** | 86.40% |
+| Face2Face | **92.62%** | 84.79% |
+| FaceSwap | **91.29%** | 83.56% |
+| NeuralTextures | **88.95%** | 83.36% |
 
-6. **LR uniforme** : backbone et classifier au même LR → features ImageNet potentiellement dégradées trop vite.
+#### Confusion matrix V5 : `[[3321, 815], [571, 7640]]`
+
+- 815 faux positifs (20% des real classées fake) vs 97 en V4 (7%)
+- 571 faux négatifs (7% des fakes manqués) vs 332 en V4 (12%)
+- Le modèle a un **biais vers "fake"** : recall élevé (93%) mais precision faible (90%)
+- Cause directe : pas de class weighting → le modèle apprend que prédire "fake" est plus sûr (classe 4× plus fréquente)
+
+#### Analyse des courbes d'entraînement V5
+
+Courbes dans `results/v5/training_curves.png` :
+- **Epochs 1-5 (freeze)** : classifier seul, ~251s/epoch, progression lente (60% → 67%)
+- **Epoch 6 (unfreeze)** : saut spectaculaire 67% → 77% (même pattern que V4)
+- **Epochs 6-16 (montée)** : progression rapide 77% → 90.5%, train ≈ val
+- **Epochs 17-39 (plateau + overfitting)** : train loss continue de baisser (0.35 → 0.32) mais **val loss remonte** (0.35 → 0.40). Divergence train/val visible : train acc 92% vs val acc 88%. Le scheduler intervient 3 fois (epochs 22, 28, 34) sans amélioration.
+
+**Pattern clé** : la divergence train/val loss est le symptôme d'un overfitting que les augmentations (trop agressives) n'arrivent pas à compenser. Le BN freeze désactivé + batch_size=16 amplifient le bruit → oscillations de 3% sur val acc.
+
+#### Analyse des courbes ROC V5
+
+Courbes dans `results/v5/roc_curves_per_method.png` :
+- Deepfakes reste la meilleure (AUC=0.969) mais en recul vs V4 (0.980)
+- NeuralTextures la plus difficile (AUC=0.916), même tendance que V4
+- Les 4 courbes sont moins proches du coin haut-gauche que V4 → classifieur globalement moins discriminant
+- AUC global 0.9392 vs 0.9671 en V4 → **régression de 2.8 points**
+
+### Analyse V5 : pourquoi un modèle 3.6× plus gros fait pire
+
+Le passage de B0 (5.3M params) à B4 (19M params) a **dégradé** les performances (-1% accuracy, -2.8% AUC). Causes identifiées par audit approfondi :
+
+1. **BN freeze désactivé** : le flag `--freeze_bn` n'était pas passé dans `submit_train_v5.sh` (commit ced81d4 l'a rendu optionnel avec `default=False`). Avec batch_size=16, les statistiques de batch sont bruitées → corruption des running stats ImageNet → oscillations de 3% entre epochs (88.2% → 90.9%).
+
+2. **Résolution incorrecte** : `IMAGE_SIZE = 299` hardcodé dans `transforms.py` alors que B4 natif = 380×380. Le modèle recevait des images sous-dimensionnées → ses couches finales travaillaient sur des feature maps trop petites → perte de détails fins.
+
+3. **Pas de class weighting** : ratio real:fake de 1:4 non compensé → biais vers "fake" → 815 faux positifs (vs 97 en V4). Le paper FaceForensics++ utilise explicitement des class weights.
+
+4. **Augmentations trop agressives** : rotation 15°, GaussianBlur σ=1.0, 2 trous CutOut de 40px → destruction des artefacts de deepfake subtils que le modèle doit détecter. Un modèle plus gros (B4) est plus sensible à la qualité du signal d'entrée.
+
+5. **Face margin trop large** : margin=0.3 (1.6× total) vs paper 1.3× → trop de background inutile, dilution des artefacts de frontière.
+
+6. **LR uniforme** : backbone et classifier au même LR (1e-05) → features ImageNet potentiellement dégradées trop vite. Un modèle plus gros nécessite un differential LR pour protéger ses couches basses.
+
+**Leçon principale** : un modèle plus gros ne garantit pas de meilleurs résultats si le pipeline d'entraînement n'est pas adapté. B4 a plus de capacité mais aussi plus de paramètres à corrompre — chaque erreur de configuration (BN, résolution, class weights) a un impact amplifié.
 
 ---
 
@@ -1390,40 +1447,43 @@ sbatch scripts/submit_train_v6.sh
 
 Note : V2 n'a pas eu de run indépendant — les recommandations V2 ont été intégrées dans V3/V4.
 
-#### Résultats d'évaluation (sur le test set, 4200 samples)
+#### Résultats d'évaluation (sur le test set)
 
-| Métrique | V3 (bugué) | V4 (fixé) | Amélioration |
-|----------|-----------|-----------|-------------|
-| **Accuracy** | 71.60% | **89.79%** | +18.2% |
-| **AUC** | 0.7204 | **0.9671** | +0.247 |
-| **Precision** | 71.51% | **96.22%** | +24.7% |
-| **Recall** | 95.39% | **88.14%** | -7.2% |
-| **F1-Score** | 0.8174 | **0.9200** | +0.103 |
+| Métrique | V3 (bugué) | V4 (fixé) | V5 (B4) | V4→V5 |
+|----------|-----------|-----------|---------|-------|
+| **Samples** | 4200 | 4200 | 12347 | — |
+| **Accuracy** | 71.60% | **89.79%** | 88.77% | **-1.02%** |
+| **AUC** | 0.7204 | **0.9671** | 0.9392 | **-0.028** |
+| **Precision** | 71.51% | **96.22%** | 90.36% | **-5.86%** |
+| **Recall** | 95.39% | 88.14% | **93.05%** | +4.91% |
+| **F1-Score** | 0.8174 | **0.9200** | 0.9168 | **-0.003** |
+
+Note : V5 a été évaluée sur 12347 samples (faces pré-extraites) vs 4200 pour V3/V4 (vidéos avec frames_per_video=10). V5 est une régression malgré un modèle 3.6× plus gros — voir analyse détaillée dans la section V5.
 
 Note : L'évaluation V4 a été faite sur le checkpoint de l'epoch 23 (meilleur val_acc). L'entraînement a continué jusqu'à l'epoch 34 mais est resté sur un plateau (pas d'amélioration après epoch 23).
 
 #### AUC par méthode de manipulation
 
-| Méthode | V3 | V4 | DeepfakeBench (B4) | V4 vs DeepfakeBench |
-|---------|-----|-----|-------------------|-------------------|
-| **Deepfakes** | 0.761 | **0.9797** | 0.9757 | **+0.004 (V4 gagne)** |
-| **Face2Face** | 0.722 | 0.9712 | **0.9758** | -0.005 |
-| **FaceSwap** | 0.685 | 0.9683 | **0.9797** | -0.011 |
-| **NeuralTextures** | 0.730 | **0.9458** | 0.9308 | **+0.015 (V4 gagne)** |
-| **Global** | 0.720 | **0.9671** | 0.9567 | **+0.010 (V4 gagne)** |
+| Méthode | V3 | V4 | V5 | DeepfakeBench (B4) |
+|---------|-----|-----|-----|-------------------|
+| **Deepfakes** | 0.761 | **0.9797** | 0.9685 | 0.9757 |
+| **Face2Face** | 0.722 | **0.9712** | 0.9436 | 0.9758 |
+| **FaceSwap** | 0.685 | **0.9683** | 0.9294 | 0.9797 |
+| **NeuralTextures** | 0.730 | **0.9458** | 0.9156 | 0.9308 |
+| **Global** | 0.720 | **0.9671** | 0.9392 | 0.9567 |
 
-Notre EfficientNet-B0 (5.3M params) en V4 **bat déjà** le benchmark DeepfakeBench EfficientNet-B4 (19M params) sur l'AUC global (0.9671 vs 0.9567) et sur 2 méthodes sur 4. Ceci grâce à notre pipeline (freeze/unfreeze, mixup, label smoothing, augmentations avancées, face extraction).
+V4 (EfficientNet-B0, 5.3M params) **bat** V5 (EfficientNet-B4, 19M params) et DeepfakeBench sur l'AUC global. V5 régresse à cause des problèmes de configuration identifiés (BN freeze, résolution, class weights). V6 corrige tous ces problèmes.
 
 #### Accuracy par méthode de manipulation
 
-| Méthode | V3 | V4 |
-|---------|-----|-----|
-| **Deepfakes** | 48.57% | **92.24%** |
-| **Face2Face** | 47.76% | **92.62%** |
-| **FaceSwap** | 46.86% | **91.29%** |
-| **NeuralTextures** | 46.81% | **88.95%** |
+| Méthode | V3 | V4 | V5 |
+|---------|-----|-----|-----|
+| **Deepfakes** | 48.57% | **92.24%** | 86.40% |
+| **Face2Face** | 47.76% | **92.62%** | 84.79% |
+| **FaceSwap** | 46.86% | **91.29%** | 83.56% |
+| **NeuralTextures** | 46.81% | **88.95%** | 83.36% |
 
-NeuralTextures est la méthode la plus difficile à détecter (88.95% vs 92% pour les autres). C'est cohérent avec la littérature : NeuralTextures modifie uniquement l'expression du visage de façon très subtile, contrairement aux autres méthodes qui remplacent le visage entier.
+V5 régresse sur les 4 méthodes (-5 à -8% vs V4). La chute est uniforme, confirmant un problème systémique (pipeline) et non spécifique à une méthode. NeuralTextures reste la plus difficile dans toutes les versions.
 
 #### Analyse des matrices de confusion
 
@@ -1436,6 +1496,12 @@ NeuralTextures est la méthode la plus difficile à détecter (88.95% vs 92% pou
 - Seulement 97 faux positifs (7% des real classées comme fake) vs 1064 en V3
 - 332 faux négatifs (12% des fakes passent inaperçus)
 - Bonne balance precision/recall → le backbone entraîné détecte les vrais artefacts au lieu de se baser sur un biais statistique
+
+**V5 (B4)** — confusion matrix : `[[3321, 815], [571, 7640]]`
+- 815 faux positifs (20% des real classées comme fake) — **régression majeure** vs V4 (7%)
+- 571 faux négatifs (7% des fakes manqués) — meilleur que V4 (12%)
+- Le modèle a un biais vers "fake" : il préfère prédire fake (recall 93%) au détriment de la precision (90%)
+- Cause : pas de class weighting (ratio 1:4 real:fake non compensé) + BN freeze désactivé → le modèle apprend un raccourci statistique au lieu des artefacts réels
 
 #### Analyse des courbes d'entraînement
 
