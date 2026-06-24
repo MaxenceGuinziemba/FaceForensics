@@ -1443,47 +1443,46 @@ sbatch scripts/submit_train_v6.sh
 | V3 | EfficientNet-B0 (bugué) | 5.3M | 73.81% | 0.5952 | 37/50 | 50 | 20h |
 | V4 | EfficientNet-B0 (fixé) | 5.3M | **89.71%** | 0.3801 | 23/34 | 34 (arrêt forcé) | ~13h |
 | V5 | EfficientNet-B4 | 19M | **90.93%** | 0.3567 | 19/? | En cours | ~10h |
-| V6 | EfficientNet-B4 (optimisé) | 19M | **?** | - | - | A lancer | ~20h estimé |
+| V6 | EfficientNet-B4 (diff LR) | 19M | **92.08%** | 0.3890 | 9/24 | 24 (early stop) | ~7h |
+| V7 | EfficientNet-B4 (LR uniforme) | 19M | **?** | - | - | En cours | ~12-16h estimé |
 
 Note : V2 n'a pas eu de run indépendant — les recommandations V2 ont été intégrées dans V3/V4.
 
 #### Résultats d'évaluation (sur le test set)
 
-| Métrique | V3 (bugué) | V4 (fixé) | V5 (B4) | V4→V5 |
-|----------|-----------|-----------|---------|-------|
-| **Samples** | 4200 | 4200 | 12347 | — |
-| **Accuracy** | 71.60% | **89.79%** | 88.77% | **-1.02%** |
-| **AUC** | 0.7204 | **0.9671** | 0.9392 | **-0.028** |
-| **Precision** | 71.51% | **96.22%** | 90.36% | **-5.86%** |
-| **Recall** | 95.39% | 88.14% | **93.05%** | +4.91% |
-| **F1-Score** | 0.8174 | **0.9200** | 0.9168 | **-0.003** |
+| Métrique | V3 (bugué) | V4 (fixé) | V5 (B4) | V6 (diff LR) |
+|----------|-----------|-----------|---------|-------------|
+| **Samples** | 4200 | 4200 | 12347 | 20574 |
+| **Accuracy** | 71.60% | **89.79%** | 88.77% | 89.37% |
+| **AUC** | 0.7204 | **0.9671** | 0.9392 | 0.9587 |
+| **Precision** | 71.51% | 96.22% | 90.36% | **95.11%** |
+| **Recall** | 95.39% | 88.14% | **93.05%** | 88.56% |
+| **F1-Score** | 0.8174 | **0.9200** | 0.9168 | 0.9172 |
 
-Note : V5 a été évaluée sur 12347 samples (faces pré-extraites) vs 4200 pour V3/V4 (vidéos avec frames_per_video=10). V5 est une régression malgré un modèle 3.6× plus gros — voir analyse détaillée dans la section V5.
-
-Note : L'évaluation V4 a été faite sur le checkpoint de l'epoch 23 (meilleur val_acc). L'entraînement a continué jusqu'à l'epoch 34 mais est resté sur un plateau (pas d'amélioration après epoch 23).
+Note : V5 évaluée sur 12347 samples (faces pré-extraites), V6 sur 20574 (50 faces/vidéo). V5 et V6 sont des régressions vs V4 malgré un modèle 3.6× plus gros — V5 à cause de problèmes de configuration, V6 à cause du differential LR qui limite l'entraînement utile à 4 epochs.
 
 #### AUC par méthode de manipulation
 
-| Méthode | V3 | V4 | V5 | DeepfakeBench (B4) |
-|---------|-----|-----|-----|-------------------|
-| **Deepfakes** | 0.761 | **0.9797** | 0.9685 | 0.9757 |
-| **Face2Face** | 0.722 | **0.9712** | 0.9436 | 0.9758 |
-| **FaceSwap** | 0.685 | **0.9683** | 0.9294 | 0.9797 |
-| **NeuralTextures** | 0.730 | **0.9458** | 0.9156 | 0.9308 |
-| **Global** | 0.720 | **0.9671** | 0.9392 | 0.9567 |
+| Méthode | V3 | V4 | V5 | V6 | DeepfakeBench (B4) |
+|---------|-----|-----|-----|-----|-------------------|
+| **Deepfakes** | 0.761 | **0.9797** | 0.9685 | 0.9725 | 0.9757 |
+| **Face2Face** | 0.722 | **0.9712** | 0.9436 | 0.9703 | 0.9758 |
+| **FaceSwap** | 0.685 | **0.9683** | 0.9294 | 0.9549 | 0.9797 |
+| **NeuralTextures** | 0.730 | **0.9458** | 0.9156 | 0.9372 | 0.9308 |
+| **Global** | 0.720 | **0.9671** | 0.9392 | 0.9587 | 0.9567 |
 
-V4 (EfficientNet-B0, 5.3M params) **bat** V5 (EfficientNet-B4, 19M params) et DeepfakeBench sur l'AUC global. V5 régresse à cause des problèmes de configuration identifiés (BN freeze, résolution, class weights). V6 corrige tous ces problèmes.
+V4 reste le meilleur en AUC global. V6 rattrape V4 sur Deepfakes/Face2Face mais reste en retrait sur FaceSwap/NeuralTextures — le differential LR a coupé l'entraînement trop tôt. V7 (LR uniforme + corrections V6) devrait dépasser V4 sur toutes les méthodes.
 
 #### Accuracy par méthode de manipulation
 
-| Méthode | V3 | V4 | V5 |
-|---------|-----|-----|-----|
-| **Deepfakes** | 48.57% | **92.24%** | 86.40% |
-| **Face2Face** | 47.76% | **92.62%** | 84.79% |
-| **FaceSwap** | 46.86% | **91.29%** | 83.56% |
-| **NeuralTextures** | 46.81% | **88.95%** | 83.36% |
+| Méthode | V3 | V4 | V5 | V6 |
+|---------|-----|-----|-----|-----|
+| **Deepfakes** | 48.57% | **92.24%** | 86.40% | 91.51% |
+| **Face2Face** | 47.76% | **92.62%** | 84.79% | 91.30% |
+| **FaceSwap** | 46.86% | **91.29%** | 83.56% | 90.13% |
+| **NeuralTextures** | 46.81% | **88.95%** | 83.36% | 87.72% |
 
-V5 régresse sur les 4 méthodes (-5 à -8% vs V4). La chute est uniforme, confirmant un problème systémique (pipeline) et non spécifique à une méthode. NeuralTextures reste la plus difficile dans toutes les versions.
+V6 récupère 5-7% par rapport à V5 sur chaque méthode grâce aux class weights et résolution native. L'écart avec V4 est réduit à ~1%. NeuralTextures reste la plus difficile dans toutes les versions.
 
 #### Analyse des matrices de confusion
 
@@ -1502,6 +1501,12 @@ V5 régresse sur les 4 méthodes (-5 à -8% vs V4). La chute est uniforme, confi
 - 571 faux négatifs (7% des fakes manqués) — meilleur que V4 (12%)
 - Le modèle a un biais vers "fake" : il préfère prédire fake (recall 93%) au détriment de la precision (90%)
 - Cause : pas de class weighting (ratio 1:4 real:fake non compensé) + BN freeze désactivé → le modèle apprend un raccourci statistique au lieu des artefacts réels
+
+**V6 (B4, differential LR)** — confusion matrix : `[[6268, 623], [1565, 12118]]`
+- 623 faux positifs (9% des real classées fake) — entre V4 (7%) et V5 (20%)
+- 1565 faux négatifs (11.4% des fakes manqués) — similaire à V4 (12%)
+- Meilleur équilibre que V5 grâce aux class weights qui corrigent le biais vers "fake"
+- Le modèle reste légèrement conservateur (precision 95% > recall 89%) — normal avec seulement 4 epochs d'entraînement utile
 
 #### Analyse des courbes d'entraînement
 
@@ -1538,30 +1543,30 @@ V5 régresse sur les 4 méthodes (-5 à -8% vs V4). La chute est uniforme, confi
 
 #### Hyperparamètres par version
 
-| Paramètre | V1 | V2 | V3 | V4 | V5 | V6 |
-|-----------|----|----|----|----|-----|-----|
-| **Modèle** | ResNet18 | ResNet18 | EfficientNet-B0 | EfficientNet-B0 | EfficientNet-B4 | EfficientNet-B4 |
-| **IMAGE_SIZE** | 299 | 299 | 299 | 299 | 299 | **380** |
-| **LR** | 2e-04 | 5e-05 | 3e-05 | 3e-05 | 1e-05 | **2e-04 / 2e-05** |
-| **Differential LR** | Non | Non | Non | Non | Non | **Oui (×0.1)** |
-| **Batch size** | 32 | 32 | 32 | 32 | 16 | **32** |
-| **Dropout** | 0.5 | 0.6 | 0.5 | 0.5 | 0.5 | **0.4** |
-| **Weight decay** | 1e-4 | 1e-4 | 5e-4 | 5e-4 | 5e-4 | **1e-4** |
-| **Class weights** | Non | Non | Non | Non | Non | **Oui (auto)** |
-| **Frames/vidéo** | 10 | 5 | 5 | 5 | 30 (pré-extraites) | **50 (pré-extraites)** |
-| **Face margin** | — | — | 0.3 (1.6×) | 0.3 (1.6×) | 0.3 (1.6×) | **0.15 (1.3×)** |
-| **Samples/epoch** | 21,600 | 10,800 | 10,800 | 10,800 | ~64,800 | **~108,000** |
-| **Scheduler** | ReduceLROnPlateau | ReduceLROnPlateau | CosineAnnealing | ReduceLROnPlateau | ReduceLROnPlateau | ReduceLROnPlateau |
-| **Freeze/unfreeze** | Non | Non | Oui (5 epochs) | Oui (5 epochs) | Oui (5 epochs) | Oui (5 epochs) |
-| **Warmup** | Non | Non | Oui (3 epochs) | Oui (3 epochs) | Oui (3 epochs) | Oui (3 epochs) |
-| **Mixup** | Non | Non | Oui (p=0.5) | Oui (p=0.3) | Oui (p=0.3) | **Oui (p=0.2, α=0.2)** |
-| **Label smoothing** | Non | Non | Oui (0.1) | Oui (0.1) | Oui (0.1) | Oui (0.1) |
-| **Face extraction** | Pas de crop | Pas de crop | On-the-fly (SSD) | On-the-fly (SSD) | Pré-extraite (JPEG) | **Pré-extraite (margin=0.15)** |
-| **Augmentations** | Basiques | Basiques | Avancées | Avancées | Avancées | **Allégées** |
-| **BN freeze** | Non | Non | Non | Non | Non (oublié) | **Oui** |
-| **Gradient clipping** | Non | Non | Non | Non | Oui (1.0) | Oui (1.0) |
-| **Assertion unfreeze** | Non | Non | Non | Non | Non | **Oui** |
-| **Early stopping** | patience=10 | patience=15 | Non | patience=20 | patience=20 | **patience=15** |
+| Paramètre | V1 | V2 | V3 | V4 | V5 | V6 | V7 |
+|-----------|----|----|----|----|-----|-----|-----|
+| **Modèle** | ResNet18 | ResNet18 | EfficientNet-B0 | EfficientNet-B0 | EfficientNet-B4 | EfficientNet-B4 | EfficientNet-B4 |
+| **IMAGE_SIZE** | 299 | 299 | 299 | 299 | 299 | 380 | **380** |
+| **LR** | 2e-04 | 5e-05 | 3e-05 | 3e-05 | 1e-05 | 2e-04/2e-05 | **3e-05 uniforme** |
+| **Differential LR** | Non | Non | Non | Non | Non | Oui (×0.1) | **Non** |
+| **Batch size** | 32 | 32 | 32 | 32 | 16 | 32 | **32** |
+| **Dropout** | 0.5 | 0.6 | 0.5 | 0.5 | 0.5 | 0.4 | **0.4** |
+| **Weight decay** | 1e-4 | 1e-4 | 5e-4 | 5e-4 | 5e-4 | 1e-4 | **1e-4** |
+| **Class weights** | Non | Non | Non | Non | Non | Oui (auto) | **Oui (auto)** |
+| **Frames/vidéo** | 10 | 5 | 5 | 5 | 30 (pré-extraites) | 50 (pré-extraites) | **50 (pré-extraites)** |
+| **Face margin** | — | — | 0.3 (1.6×) | 0.3 (1.6×) | 0.3 (1.6×) | 0.15 (1.3×) | **0.15 (1.3×)** |
+| **Samples/epoch** | 21,600 | 10,800 | 10,800 | 10,800 | ~64,800 | ~108,000 | **~108,000** |
+| **Scheduler** | ReduceLROnPlateau | ReduceLROnPlateau | CosineAnnealing | ReduceLROnPlateau | ReduceLROnPlateau | ReduceLROnPlateau | **ReduceLROnPlateau** |
+| **Freeze/unfreeze** | Non | Non | Oui (5 epochs) | Oui (5 epochs) | Oui (5 epochs) | Oui (5 epochs) | **Oui (4 epochs)** |
+| **Warmup** | Non | Non | Oui (3 epochs) | Oui (3 epochs) | Oui (3 epochs) | Oui (3 epochs) | **Oui (3 epochs)** |
+| **Mixup** | Non | Non | Oui (p=0.5) | Oui (p=0.3) | Oui (p=0.3) | Oui (p=0.2, α=0.2) | **Oui (p=0.2, α=0.2)** |
+| **Label smoothing** | Non | Non | Oui (0.1) | Oui (0.1) | Oui (0.1) | Oui (0.1) | **Oui (0.1)** |
+| **Face extraction** | Pas de crop | Pas de crop | On-the-fly (SSD) | On-the-fly (SSD) | Pré-extraite (JPEG) | Pré-extraite (margin=0.15) | **Pré-extraite (margin=0.15)** |
+| **Augmentations** | Basiques | Basiques | Avancées | Avancées | Avancées | Allégées | **Allégées** |
+| **BN freeze** | Non | Non | Non | Non | Non (oublié) | Oui | **Oui** |
+| **Gradient clipping** | Non | Non | Non | Non | Oui (1.0) | Oui (1.0) | **Oui (1.0)** |
+| **Assertion unfreeze** | Non | Non | Non | Non | Non | Oui | **Oui** |
+| **Early stopping** | patience=10 | patience=15 | Non | patience=20 | patience=20 | patience=15 | **patience=10** |
 
 #### Bugs et leçons par version
 
@@ -1572,6 +1577,7 @@ V5 régresse sur les 4 méthodes (-5 à -8% vs V4). La chute est uniforme, confi
 | V3 | `return` mal indenté dans `set_trainable_up_to()` → seul 1 paramètre dégelé sur des milliers | train acc (68%) < val acc (73%) = pattern d'underfitting | **Toujours tester le freeze/unfreeze avec une assertion**. Coût du bug : 20h de GPU |
 | V4 | Plateau à 90% → limite de capacité d'EfficientNet-B0 (5.3M params) | Écart train/val de 2% seulement = bonne généralisation, le modèle a donné tout ce qu'il pouvait | B0 est trop petit pour capturer les artefacts subtils de deepfake en c23 |
 | V5 | BN freeze oublié (flag non passé dans script SLURM) + IMAGE_SIZE 299 au lieu de 380 + pas de class weights + augmentations trop agressives | Oscillations 3% val acc (88-91%) malgré B4 (19M params) | Toujours vérifier que **chaque flag** du code est passé dans le script. Auditer le paper original avant de choisir les hyperparamètres |
+| V6 | Differential LR ×0.1 → désapprentissage catastrophique (train ET val chutent après epoch 9) | Pattern inédit : les deux métriques descendent ensemble après un pic (92.08%) | Le differential LR crée un désalignement backbone/classifier. Simplicité > sophistication : LR uniforme prouvé en V4 |
 
 #### Ce que chaque version a apporté au pipeline
 
@@ -1583,9 +1589,360 @@ V5 régresse sur les 4 méthodes (-5 à -8% vs V4). La chute est uniforme, confi
 | V4 | Fix bug unfreeze, ReduceLROnPlateau adaptatif, réduction mixup (0.5 → 0.3) |
 | V5 | Modèle B4, faces pré-extraites, fix BatchNorm, gradient clipping, CLI configurable |
 | V6 | Résolution native 380×380, class weights, differential LR, margin paper (1.3×), augmentations allégées, assertion unfreeze |
+| V7 | Retour au LR uniforme 3e-05, freeze 4 epochs, patience 10 — combine la stabilité V4 avec les corrections V6 |
 
-**Progression totale** : 65% → 91% → 95% (estimé V6), soit **+30 points d'accuracy** en 6 itérations.
+**Progression totale** : 65% → 91% → 95% (estimé V7), soit **+30 points d'accuracy** en 7 itérations.
 
-**Temps GPU total consommé** : ~58h (dont 20h perdues sur le bug V3). V6 estimé : +20h.
+**Temps GPU total consommé** : ~65h (dont 20h perdues sur le bug V3, ~7h sur V6). V7 estimé : +12-16h.
 
-**Point clé pour le rapport** : chaque version a apporté une leçon — V1 sur l'overfitting et le learning rate, V2 sur l'optimisation des hyperparamètres, V3 sur l'importance des tests unitaires et du diagnostic par les métriques, V4 sur le choix du scheduler, V5 sur le fine-tuning des BatchNorm et l'audit de la littérature, V6 sur l'importance de reproduire fidèlement les choix du paper de référence (résolution, class weights, face margin) tout en ajoutant des améliorations ciblées (differential LR, assertion unfreeze). L'amélioration n'est pas seulement venue du modèle plus gros, mais de la compréhension progressive du problème.
+**Point clé pour le rapport** : chaque version a apporté une leçon — V1 sur l'overfitting et le learning rate, V2 sur l'optimisation des hyperparamètres, V3 sur l'importance des tests unitaires et du diagnostic par les métriques, V4 sur le choix du scheduler, V5 sur le fine-tuning des BatchNorm et l'audit de la littérature, V6 sur les dangers du differential LR et l'importance de la stabilité d'entraînement, V7 sur le retour aux fondamentaux (LR uniforme prouvé). L'amélioration n'est pas seulement venue du modèle plus gros, mais de la compréhension progressive du problème.
+
+---
+
+## Résultats d'entraînement V6 (Job 861929)
+
+- **Date** : 2026-06-24
+- **Cluster** : gpu-gw.enst.fr, RTX 3090 24GB
+- **Config** : EfficientNet-B4 380×380, lr=2e-04/2e-05 (differential ×0.1), dropout=0.4, batch_size=32, weight_decay=1e-4, freeze_epochs=5, warmup_epochs=3, freeze_bn, class weights auto, faces pré-extraites (margin=0.15, 50/vidéo)
+
+### Résultats d'entraînement
+
+| Epoch | Train loss | Train acc | Val loss | Val acc | LR (backbone/classifier) | Observation |
+|-------|------------|-----------|----------|---------|--------------------------|-------------|
+| 1 | 0.6943 | 49.95% | 0.7076 | 48.14% | 7.3e-06/6.7e-05 | Warmup (1/3) |
+| 2 | 0.6811 | 56.48% | 0.6901 | 60.43% | 1.4e-05/1.3e-04 | Warmup (2/3) |
+| 3 | 0.6718 | 58.99% | 0.6840 | 62.11% | 2.0e-05/2.0e-04 | Warmup terminé |
+| 4 | 0.6659 | 60.29% | 0.6795 | 63.12% | 2.0e-05/2.0e-04 | Freeze (classifier seul) |
+| 5 | 0.6626 | 60.98% | 0.6815 | 61.41% | 2.0e-05/2.0e-04 | Dernière epoch freeze |
+| **6** | **0.4697** | **82.33%** | **0.4281** | **88.06%** | 2.0e-05/2.0e-04 | **Unfreeze → saut +27% val acc** |
+| 7 | 0.3736 | 90.56% | 0.4370 | 89.31% | 2.0e-05/2.0e-04 | Pic train acc |
+| 8 | 0.3744 | 90.60% | 0.4002 | 91.74% | 2.0e-05/2.0e-04 | |
+| **9** | **0.3888** | **89.51%** | **0.3890** | **92.08%** | 2.0e-05/2.0e-04 | **Meilleur modèle** ✅ |
+| 10 | 0.4113 | 87.75% | 0.4180 | 89.76% | 2.0e-05/2.0e-04 | **Début dégradation** ⚠️ |
+| 11 | 0.4401 | 85.70% | 0.4147 | 89.75% | 2.0e-05/2.0e-04 | Train acc continue de baisser |
+| 12 | 0.4696 | 83.22% | 0.4417 | 88.26% | 2.0e-05/2.0e-04 | |
+| 13 | 0.4995 | 80.46% | 0.4492 | 87.29% | 2.0e-05/2.0e-04 | |
+| 14 | 0.5325 | 77.42% | 0.4893 | 84.02% | 2.0e-05/2.0e-04 | |
+| 15 | 0.5635 | 74.16% | 0.5263 | 81.11% | **1.0e-05/1.0e-04** | **Scheduler ÷2** (1re intervention) |
+| 16 | 0.5646 | 73.93% | 0.5266 | 80.85% | 1.0e-05/1.0e-04 | ÷2 ne stoppe pas la chute |
+| 17 | 0.5779 | 72.36% | 0.5229 | 81.15% | 1.0e-05/1.0e-04 | |
+| 18 | 0.5934 | 70.49% | 0.5531 | 78.34% | 1.0e-05/1.0e-04 | |
+| 19 | 0.6069 | 69.23% | 0.5503 | 78.69% | 1.0e-05/1.0e-04 | |
+| 20 | 0.6168 | 67.75% | 0.5645 | 77.67% | 1.0e-05/1.0e-04 | |
+| 21 | 0.6306 | 65.98% | 0.6306 | 68.37% | **5.0e-06/5.0e-05** | **Scheduler ÷2** (2e intervention) |
+| 22 | 0.6275 | 66.39% | 0.5968 | 73.18% | 5.0e-06/5.0e-05 | |
+| 23 | 0.6332 | 65.47% | 0.6640 | 63.86% | 5.0e-06/5.0e-05 | |
+| 24 | 0.6400 | 64.78% | 0.6945 | 59.98% | 5.0e-06/5.0e-05 | Early stopping (patience=15 atteinte) |
+
+**Meilleur modèle sauvegardé** : epoch 9, val_acc = **92.08%**, val_loss = 0.3890
+**Durée** : ~7h (24 epochs × ~600s/epoch en moyenne)
+
+### Analyse V6 : le differential LR cause un désapprentissage catastrophique
+
+#### Le pattern inédit : train ET val dégradent ensemble
+
+C'est un pattern qu'on n'avait jamais vu dans les versions précédentes :
+- **Overfitting** (V1) : train monte, val descend → régularisation insuffisante
+- **Underfitting** (V3) : train < val, les deux progressent lentement → modèle ne peut pas apprendre
+- **Désapprentissage** (V6) : **train ET val descendent après un pic** → le modèle oublie ce qu'il a appris
+
+Le modèle atteint 92.08% val acc à epoch 9, puis régresse jusqu'à 59.98% à epoch 24 — pire que le hasard ajusté au ratio des classes. Le scheduler intervient 2 fois (epochs 15 et 21, ÷2 chaque fois) sans stopper la chute.
+
+#### Cause : désalignement backbone/classifier dû au differential LR
+
+Le differential LR à ratio 10× (backbone 2e-05, classifier 2e-04) crée un **désalignement progressif** :
+
+1. **Epochs 6-9** : le classifier s'adapte rapidement aux features du backbone → résultats excellents (92%)
+2. **Epoch 10+** : le classifier a "overshooté" — il s'est spécialisé sur les features actuelles du backbone, mais le backbone continue de bouger lentement (LR 10× plus faible). Les features changent, le classifier n'est plus aligné → les deux régressent
+3. Le phénomène s'auto-renforce : les gradients du classifier devenu incohérent perturbent le backbone → les features dérivent encore plus → cercle vicieux
+
+En V4 (LR uniforme 3e-05), backbone et classifier évoluaient au même rythme → pas de désalignement → pas de dégradation.
+
+#### Facteur aggravant : BN freeze
+
+Avec `--freeze_bn`, les couches BatchNorm utilisent les statistiques ImageNet fixes. Quand les poids du backbone dérivent (à cause du désalignement), les statistiques BN deviennent progressivement incorrectes. Sans BN freeze, les running stats auraient pu partiellement compenser la dérive — avec BN freeze, aucune correction n'est possible.
+
+#### Analyse des courbes d'entraînement
+
+Courbes dans `results/v6/training_curves.png` :
+
+- **Loss** : les deux courbes (train et val) plongent à epoch 6 (unfreeze), atteignent un minimum à epoch 8-10, puis **remontent ensemble** jusqu'à ~0.65-0.70 — retour quasi au niveau pré-unfreeze
+- **Accuracy** : pic à epoch 7-9 (~90% train, ~92% val), puis chute symétrique des deux courbes. À epoch 24, train (65%) et val (60%) sont revenus au niveau des epochs de freeze
+- Le pattern est parfaitement symétrique : ce qui a été appris aux epochs 6-9 est systématiquement désappris aux epochs 10-24
+
+### Résultats d'évaluation V6 (test set, 20574 samples)
+
+| Métrique | V4 (B0) | V5 (B4) | V6 (B4) |
+|----------|---------|---------|---------|
+| **Samples** | 4200 | 12347 | 20574 |
+| **Accuracy** | **89.79%** | 88.77% | 89.37% |
+| **AUC** | **0.9671** | 0.9392 | 0.9587 |
+| **Precision** | 96.22% | 90.36% | **95.11%** |
+| **Recall** | 88.14% | **93.05%** | 88.56% |
+| **F1** | **0.9200** | 0.9168 | 0.9172 |
+
+V6 remonte par rapport à V5 (AUC +0.02, precision +5%) grâce aux corrections (résolution 380, class weights, margin 1.3×), mais ne bat pas V4 car le differential LR a limité l'entraînement utile à seulement 4 epochs (6-9).
+
+#### AUC par méthode
+
+| Méthode | V4 (B0) | V5 (B4) | V6 (B4) | DeepfakeBench (B4) |
+|---------|---------|---------|---------|-------------------|
+| Deepfakes | **0.9797** | 0.9685 | 0.9725 | 0.9757 |
+| Face2Face | **0.9712** | 0.9436 | 0.9703 | 0.9758 |
+| FaceSwap | **0.9683** | 0.9294 | 0.9549 | 0.9797 |
+| NeuralTextures | **0.9458** | 0.9156 | 0.9372 | 0.9308 |
+| **Global** | **0.9671** | 0.9392 | 0.9587 | 0.9567 |
+
+V6 rattrape quasi V4 sur Deepfakes et Face2Face (écart <0.01 AUC). FaceSwap et NeuralTextures restent en retrait — le modèle n'a pas eu assez d'epochs d'entraînement stable pour apprendre ces artefacts plus subtils.
+
+#### Accuracy par méthode
+
+| Méthode | V4 | V5 | V6 |
+|---------|-----|-----|-----|
+| Deepfakes | **92.24%** | 86.40% | 91.51% |
+| Face2Face | **92.62%** | 84.79% | 91.30% |
+| FaceSwap | **91.29%** | 83.56% | 90.13% |
+| NeuralTextures | **88.95%** | 83.36% | 87.72% |
+
+V6 récupère 5-7% par rapport à V5 sur chaque méthode, grâce aux class weights et à la résolution native. L'écart avec V4 est réduit à ~1%.
+
+#### Confusion matrix V6 : `[[6268, 623], [1565, 12118]]`
+
+- 623 faux positifs (9% des real classées fake) — entre V4 (7%) et V5 (20%)
+- 1565 faux négatifs (11.4% des fakes manqués) — similaire à V4 (12%)
+- Meilleur équilibre precision/recall que V5 grâce aux class weights
+- Les class weights ont corrigé le biais vers "fake" de V5 (815 FP → 623 FP)
+
+#### Analyse des courbes ROC V6
+
+Courbes dans `results/v6/roc_curves_per_method.png` :
+
+- Deepfakes (AUC=0.973) et Face2Face (AUC=0.970) quasi superposées, proches du coin haut-gauche
+- FaceSwap (AUC=0.955) légèrement en retrait
+- NeuralTextures (AUC=0.937) nettement plus basse, avec une montée plus lente — les artefacts de NeuralTextures (modification de texture du visage) sont les plus subtils et les plus difficiles à détecter
+- Globalement très similaire à V4 mais avec une courbe NeuralTextures un peu moins bonne
+
+#### Analyse des exemples de prédictions
+
+Grille dans `results/v6/example_predictions.png` :
+
+- **Vrais Négatifs** (Real→Real) : confiance très élevée (0.98, 0.99) — le modèle est sûr de lui sur les vrais visages
+- **Vrais Positifs** (Fake→Fake) : confiance bonne (0.90, 0.93) — détection fiable des fakes
+- **Faux Négatifs** (Fake→Real) : un cas à confiance 0.93 (le modèle est très confiant que c'est real alors que c'est fake) et un à 0.50 (hésitation) — les faux négatifs confiants sont les plus dangereux
+- **Faux Positifs** (Real→Fake) : confiances faibles (0.53, 0.57) — ce sont des cas borderline, le modèle n'est pas sûr
+
+### Leçons V6
+
+#### 1. Le differential LR est dangereux sans validation empirique
+
+Le differential LR (backbone ×0.1) est une technique courante en fine-tuning, recommandée dans la littérature. Mais sur notre pipeline (avec freeze/unfreeze, BN freeze, class weights, mixup), il crée une instabilité qui détruit l'entraînement après seulement 4 epochs utiles.
+
+**Diagnostic clé** : quand train acc ET val acc baissent ensemble, ce n'est ni de l'overfitting ni de l'underfitting — c'est de l'instabilité d'entraînement. Il faut chercher un problème dans la dynamique d'optimisation (LR, momentum, interactions entre composants).
+
+#### 2. Les corrections V6 fonctionnent
+
+Malgré le problème de LR, V6 a montré que les corrections (résolution 380, class weights, margin 1.3×) sont efficaces :
+- Le pic à epoch 9 (92.08%) dépasse le meilleur de V4 (89.71%) de +2.4%
+- L'AUC par méthode rattrape quasi V4 en seulement 4 epochs d'entraînement utile
+- Les class weights corrigent le biais vers "fake" de V5
+
+#### 3. Simplicité > sophistication
+
+V4 (LR uniforme 3e-05) a battu V6 (differential LR 2e-04/2e-05) en stabilité. Ajouter de la complexité (differential LR) sans la tester isolément a introduit un problème que les autres améliorations n'ont pas pu compenser.
+
+---
+
+## V7 : LR Uniforme + Corrections V6
+
+- **Date** : 2026-06-24
+
+### Motivations
+
+V6 a démontré que les corrections structurelles (résolution 380, class weights, margin 1.3×, BN freeze) fonctionnent — le pic à 92.08% le prouve. Mais le differential LR a causé un désapprentissage catastrophique. V7 garde tout de V6 et revient au LR uniforme 3e-05 (prouvé stable en V4).
+
+### Changements V6 → V7 (4 modifications)
+
+| Paramètre | V6 | V7 | Raison |
+|-----------|-----|-----|--------|
+| **LR** | 2e-04/2e-05 (differential ×0.1) | **3e-05 uniforme** | Le LR uniforme est prouvé stable en V4 (23 epochs sans dégradation) |
+| **differential_lr** | Oui | **Non** | Supprimé — cause du désapprentissage V6 |
+| **freeze_epochs** | 5 | **4** | 1 epoch de moins en freeze, le classifier a assez de temps en 4 epochs + 3 warmup |
+| **patience** | 15 | **10** | Early stopping plus réactif pour capturer le pic |
+
+Tout le reste de V6 est conservé : résolution 380×380, class weights, margin 0.15, freeze_bn, assertion unfreeze, augmentations allégées, gradient clipping.
+
+### Config V7
+
+```bash
+python3 -m src.train \
+    --data_root data \
+    --faces_dir data/faces_v6 \
+    --compression c23 \
+    --model efficientnet_b4 \
+    --dropout 0.4 \
+    --batch_size 32 \
+    --lr 0.00003 \
+    --weight_decay 1e-4 \
+    --freeze_epochs 4 \
+    --warmup_epochs 3 \
+    --freeze_bn \
+    --epochs 50 \
+    --patience 10 \
+    --num_workers 8 \
+    --checkpoint_dir checkpoints \
+    --log_dir logs/tensorboard
+```
+
+**Fichier** : `scripts/submit_train_v7.sh`
+**Faces** : réutilise `data/faces_v6` (margin=0.15, 50 faces/vidéo, déjà extraites)
+
+### Timeline attendue
+
+- Epochs 1-3 : warmup (1e-6 → 3e-05), classifier seul (~356s/epoch)
+- Epoch 4 : plein LR, classifier seul
+- Epoch 5 : unfreeze tout le backbone (~1020s/epoch)
+- Epoch 6+ : entraînement complet, early stopping si stagnation 10 epochs
+- Val acc finale estimée : **93-95%**
+
+### Résultats V7 (Job 862284 - en cours au 2026-06-24)
+
+**Cluster** : gpu-gw.enst.fr, RTX 3090 24GB
+
+| Epoch | Train loss | Train acc | Val loss | Val acc | LR | Observation |
+|-------|------------|-----------|----------|---------|-----|-------------|
+| 1 | 0.7007 | 44.99% | 0.7112 | 42.76% | 1.1e-05 | Warmup (1/3) |
+| 2 | 0.6964 | 48.38% | 0.7089 | 47.16% | 2.0e-05 | Warmup (2/3) |
+| 3 | 0.6913 | 51.75% | 0.7007 | 57.38% | 3.0e-05 | Warmup terminé |
+| 4 | 0.6863 | 54.93% | 0.7053 | 50.09% | 3.0e-05 | Dernière epoch freeze |
+| **5** | **0.4797** | **81.22%** | **0.3861** | **91.39%** | 3.0e-05 | **Unfreeze → saut +41% val acc** ✅ |
+
+**Assertion unfreeze confirmée** : 17,552,202/17,552,202 params trainable.
+
+Le saut à l'unfreeze est encore plus fort qu'en V6 (+41% vs +27%). Le LR uniforme 3e-05 permet au backbone ET au classifier de s'ajuster ensemble dès la première epoch d'entraînement complet.
+
+### Résultats complets V7 (Job 862284)
+
+| Epoch | Train loss | Train acc | Val loss | Val acc | LR | Observation |
+|-------|------------|-----------|----------|---------|-----|-------------|
+| 1 | 0.7007 | 44.99% | 0.7112 | 42.76% | 1.1e-05 | Warmup (1/3) |
+| 2 | 0.6964 | 48.38% | 0.7089 | 47.16% | 2.0e-05 | Warmup (2/3) |
+| 3 | 0.6913 | 51.75% | 0.7007 | 57.38% | 3.0e-05 | Warmup terminé |
+| 4 | 0.6863 | 54.93% | 0.7053 | 50.09% | 3.0e-05 | Dernière epoch freeze |
+| **5** | **0.4797** | **81.22%** | **0.3861** | **91.39%** | 3.0e-05 | **Unfreeze → saut +41%** |
+| 6 | 0.3836 | 89.89% | 0.4208 | 89.90% | 3.0e-05 | Ajustement |
+| 7 | 0.3829 | 89.98% | 0.4022 | 90.86% | 3.0e-05 | |
+| 8 | 0.3976 | 88.85% | 0.3917 | 91.54% | 3.0e-05 | Nouveau best |
+| **9** | **0.4182** | **87.41%** | **0.3878** | **91.77%** | 3.0e-05 | **Meilleur modèle** ✅ |
+| 10 | 0.4522 | 84.54% | 0.5090 | 83.22% | 3.0e-05 | **Début dégradation** ⚠️ |
+| 11 | 0.4941 | 80.87% | 0.4628 | 86.24% | **1.5e-05** | Scheduler ÷2 |
+| 12 | 0.5112 | 79.08% | 0.4663 | 84.91% | 1.5e-05 | |
+| 13 | 0.5405 | 76.27% | 0.5315 | 81.05% | 1.5e-05 | |
+| 14-16 | ↗ 0.62 | ↘ 67% | ~0.60 | ~71% | 1.5e-05 | Déclin continu |
+| 17 | 0.6438 | 64.52% | 0.6236 | 69.00% | **7.5e-06** | Scheduler ÷2 |
+| 18 | 0.6446 | 64.06% | 0.6023 | 74.33% | 7.5e-06 | |
+| 19 | 0.6508 | 63.19% | 0.6190 | 73.28% | 7.5e-06 | Early stopping (patience=10) |
+
+**Meilleur modèle sauvegardé** : epoch 9, val_acc = **91.77%**, val_loss = 0.3878
+**Durée** : ~5.5h (19 epochs)
+
+### Résultats d'évaluation V7 (test set, 20574 samples)
+
+| Métrique | V4 (B0) | V6 (B4) | V7 (B4) |
+|----------|---------|---------|---------|
+| **Accuracy** | **89.79%** | 89.37% | 88.47% |
+| **AUC** | **0.9671** | 0.9587 | 0.9508 |
+| **Precision** | **96.22%** | 95.11% | 90.76% |
+| **Recall** | 88.14% | 88.56% | **92.03%** |
+| **F1** | **0.9200** | 0.9172 | 0.9139 |
+
+#### AUC par méthode — V7
+
+| Méthode | V4 | V6 | V7 |
+|---------|-----|-----|-----|
+| Deepfakes | **0.9797** | 0.9725 | 0.9611 |
+| Face2Face | **0.9712** | 0.9703 | 0.9660 |
+| FaceSwap | **0.9683** | 0.9549 | 0.9581 |
+| NeuralTextures | **0.9458** | 0.9372 | 0.9179 |
+| **Global** | **0.9671** | 0.9587 | 0.9508 |
+
+#### Confusion matrix V7 : `[[5609, 1282], [1091, 12592]]`
+
+- 1282 faux positifs (18.6% des real classées fake) — pire que V6 (9%) et V4 (7%)
+- 1091 faux négatifs (8% des fakes manqués) — meilleur que V4 (12%)
+- Le modèle a un biais vers "fake" plus marqué que V6
+
+### Analyse V7 : le LR uniforme ne suffit pas
+
+V7 reproduit le **même pattern de dégradation que V6** malgré le LR uniforme :
+- Pic à epoch 9 (91.77%), puis train ET val déclinent ensemble
+- Scheduler intervient 2 fois (epochs 11 et 17) sans stopper la chute
+- Early stopping à epoch 19
+
+**Le differential LR n'était pas la seule cause du problème.** Les différences entre V4 (stable) et V7 (instable) sont :
+
+| | V4 (stable) | V7 (instable) |
+|---|---|---|
+| BN freeze | **Non** | Oui |
+| Class weights | **Non** | Oui |
+| Samples/epoch | **10,800** | 108,000 |
+| Résolution | **299×299** | 380×380 |
+| Modèle | **B0 (5.3M)** | B4 (19M) |
+
+**Cause probable : le BN freeze.** En V4, les couches BatchNorm adaptaient leurs statistiques quand les poids du backbone changeaient. Avec BN freeze, les stats ImageNet deviennent progressivement incorrectes à mesure que le backbone évolue. Avec 108,000 samples/epoch (10× plus que V4), les poids bougent beaucoup plus par epoch, accélérant le décalage.
+
+**Résultats test V7 inférieurs à V6** : malgré le LR uniforme, V7 (88.47% test accuracy, 0.9508 AUC) fait moins bien que V6 (89.37%, 0.9587). Le checkpoint V7 (epoch 9) a eu moins d'epochs utiles que V6 (epoch 9 aussi, mais V6 avait des gradients plus forts grâce au LR classifier à 2e-04).
+
+### Conclusion des expériences
+
+**V4 reste le meilleur modèle évalué** (89.79% test accuracy, 0.9671 AUC) malgré un modèle 3.6× plus petit que V5-V7. Le passage à EfficientNet-B4 a permis d'atteindre des pics de val acc plus élevés (92% vs 90%) mais l'instabilité d'entraînement (liée au BN freeze et/ou au volume de données) empêche de concrétiser ces gains sur le test set.
+
+**Temps GPU total** : ~72h (V1: 13h, V3: 20h, V4: 13h, V5: 10h, V6: 7h, V7: 5.5h, extraction: 3.5h)
+
+---
+
+## Nettoyage du projet (2026-06-24)
+
+### Fichiers supprimés
+- `analysis_results.md`, `FIX_OVERFITTING.md`, `IMPROVEMENTS.md`, `QUICK_START_OPTIMIZED.md`, `RESUME_ANALYSE.txt` — notes temporaires obsolètes, tout est dans le journal
+- `docs/` — `GPU_CLUSTER_GUIDE.md` et `PROJECT_OVERVIEW.md` redondants avec le journal
+- `report.pdf` — fichier compilé, pas de source à versionner
+- Scripts SLURM obsolètes : `submit_train.sh` (V1), `submit_train_v5.sh`, `submit_train_v7.sh`, `submit_eval.sh` (V1), `submit_eval_v5.sh`, `download_xception_weights.sh`
+
+### Scripts conservés
+- `scripts/submit_train_v4.sh` — config du meilleur modèle évalué (EfficientNet-B0)
+- `scripts/submit_train_v6.sh` — config du meilleur pic val acc (EfficientNet-B4)
+- `scripts/submit_eval_v6.sh` — évaluation
+- `scripts/submit_extract_faces.sh` — extraction de visages
+- `scripts/setup_cluster.sh`, `scripts/download_dataset.py`, `scripts/extract_faces.py`, `scripts/extract_frames.py` — utilitaires
+
+### Structure finale du projet
+
+```
+FaceForensics/
+├── src/                          # Notre code
+│   ├── models/                   #   architectures (xception.py, models.py)
+│   ├── data/                     #   dataset, transforms, augmentations, face extraction, mixup
+│   ├── train.py                  #   script d'entraînement
+│   ├── evaluate.py               #   script d'évaluation
+│   └── detect.py                 #   détection sur vidéo
+├── scripts/                      # Scripts utilitaires et SLURM
+│   ├── submit_train_v4.sh        #   entraînement V4 (meilleur AUC test)
+│   ├── submit_train_v6.sh        #   entraînement V6 (meilleur val acc)
+│   ├── submit_eval_v6.sh         #   évaluation
+│   ├── submit_extract_faces.sh   #   extraction de visages
+│   ├── setup_cluster.sh          #   setup initial cluster
+│   ├── download_dataset.py       #   téléchargement FF++
+│   ├── extract_faces.py          #   extraction de visages
+│   └── extract_frames.py         #   extraction de frames
+├── configs/splits/               # Splits train/val/test
+├── results/                      # Résultats par version (courbes, métriques, graphiques)
+├── images/                       # Images du paper original (utilisées dans le rapport)
+├── classification/               # Code original des auteurs (référence)
+├── dataset/                      # Scripts de génération des auteurs (référence)
+├── report.typ                    # Rapport Typst
+├── JOURNAL.md                    # Journal de développement complet
+├── README.md                     # README du repo original
+├── requirements.txt              # Dépendances Python
+├── .gitignore                    # Ignore data/, checkpoints/, logs/, *.pth, *.err, *.out
+└── LICENSE
+```

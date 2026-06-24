@@ -25,9 +25,13 @@ venv/
 .DS_Store
 Thumbs.db
 
-# PyTorch
+# PyTorch (large model files)
 *.pth
 *.pt
+
+# SLURM logs
+*.err
+*.out
 
 # Face detection models (auto-downloaded)
 .face_models/
