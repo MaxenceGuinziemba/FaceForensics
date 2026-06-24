@@ -1,5 +1,5 @@
 #set page(
-  header: [ _Maxence Guinziemba_ #h(1fr) Integrative AI Project –- 2A ],
+  header: [ _Maxence Guinziemba--Prokop_ #h(1fr) Integrative AI Project],
   footer: [
     #context [ Page #counter(page).display() #h(1fr) ]
   ]
@@ -18,12 +18,12 @@
 #v(6pt)
 #align(center)[
   #set text(14pt)
-  Maxence Guinziemba
+  Maxence Guinziemba--Prokop
 ]
 #align(center)[
   #set text(12pt)
-  Telecom Paris – 2025-2026 \
-  Integrative AI Project – 2A
+  Telecom Paris : 2025-2026 \
+  Integrative AI Project 
 ]
 #v(4pt)
 #align(center)[
@@ -87,7 +87,7 @@ The task is binary classification: given a video, determine whether the face it 
 #align(center)[
   #set text(10pt)
   #box(stroke: 0.5pt, inset: 8pt, radius: 4pt)[
-    Video #sym.arrow.r Face detection #sym.arrow.r Crop & augment #sym.arrow.r CNN classifier #sym.arrow.r Real / Fake
+    Video #sym.arrow.r Face detection #sym.arrow.r Crop & augmentation #sym.arrow.r CNN classifier #sym.arrow.r Real / Fake
   ]
 ]
 
@@ -95,11 +95,11 @@ The task is binary classification: given a video, determine whether the face it 
 
 Training a deep CNN from scratch requires millions of images. The FaceForensics++ dataset contains only 2,160 training videos (far too few). Instead, we use *transfer learning*: take a model pre-trained on ImageNet (1.2 million natural images, 1000 categories) and adapt it to our binary task. The model already knows how to detect edges, textures, and shapes. We only need to teach it which patterns indicate manipulation.
 
-This is done in two phases:
+This adaptation is done in two phases:
 
-+ *Freeze phase* (first $N$ epochs): the pre-trained backbone is frozen, and only a small classifier head is trained on top. This gives the classifier time to learn how to use the existing features without corrupting them.
++ *Freeze phase* (first $N$ epochs): all backbone layers are frozen (their weights cannot change). Only a small classifier head on top is trained. This protects the pre-trained features from being destroyed by the random gradients of an untrained classifier.
 
-+ *Unfreeze phase*: the entire network becomes trainable. The backbone can now fine-tune its features to detect deepfake-specific artifacts (compression boundaries, blending seams, texture inconsistencies).
++ *Unfreeze phase*: after the classifier has converged, all layers are unfrozen and the entire network trains together. The backbone can now adapt its feature extraction (edges, textures, frequency patterns) specifically for deepfake detection, while the classifier refines its decision boundary.
 
 == Data Augmentation and Regularization
 
@@ -113,13 +113,13 @@ With a limited dataset, there is a high risk of *overfitting*. The model memoriz
 
 - *Class weighting*: the dataset contains 4 times more fake videos than real ones. Without weighting, the model learns a shortcut: predict "fake" most of the time and achieve 80% accuracy without learning any real features. Inverse-frequency weighting penalizes mistakes on the minority class proportionally.
 
-- *BatchNorm freeze*: normalization layers in the pre-trained model carry statistics learned from millions of ImageNet images. When fine-tuning with small batches (16 to 32 images), the batch-level statistics are noisy and can overwrite these carefully learned values. Keeping BatchNorm in evaluation mode preserves the pre-trained statistics.
+- *BatchNorm freeze*: BatchNorm layers store running averages (mean and variance) computed during pre-training on millions of ImageNet images. During fine-tuning, these statistics would normally be updated using the current batch, but with only 16 to 32 images per batch, the estimates are too noisy and degrade the stored values. By keeping BatchNorm in evaluation mode, we use the stable ImageNet statistics throughout training.
 
 == Face Extraction
 
 Raw video frames contain the full scene (background, body, etc.), but the manipulation only affects the face. Feeding full frames to the classifier forces it to learn to ignore irrelevant pixels, wasting capacity. An OpenCV-based face detector extracts and crops the face region from each frame, with a small margin around it (1.3$times$ the bounding box).
 
-In our early versions, face detection ran on-the-fly during training, adding ~1000 seconds per epoch. Later versions pre-extract 30--50 face crops per video to disk, reducing epoch time from ~1400s to ~350s.
+In our early versions, face detection ran on-the-fly during training, adding ~1000 seconds per epoch. Later versions pre-extract 30--50 face crops per video to disk, reducing epoch time from~1400s to~350s.
 = Experiments and Iterations
 
 The pipeline was refined through six major iterations on a single RTX 3090 (24GB VRAM) at Telecom Paris, trained on the FF++ c23 dataset (2,160 training and 420 validation videos). Each version built on the previous one, addressing a specific failure or limitation uncovered during training. Version 2 is omitted as its results were equivalent to Version 1.
@@ -130,7 +130,7 @@ The pipeline was refined through six major iterations on a single RTX 3090 (24GB
     columns: 5,
     align: (left, left, center, center, left),
     [*Version*], [*Model*], [*LR*], [*Best Val*], [*Key additions*],
-    [V1], [ResNet18 (11M)], [2e-04], [65.3%], [Baseline, 5 images, no augmentation, no freeze],
+    [V1], [ResNet18 (11M)], [2e-04], [65.3%], [Baseline, 5 images per epoch, no augmentation, no freeze],
     [V3], [EffNet-B0 (5.3M)], [3e-05], [73.8%], [freeze/unfreeze, mixup, face extraction, warmup],
     [V4], [EffNet-B0 (5.3M)], [3e-05], [*89.7%*], [bug fix, ReduceLROnPlateau, assertion],
     [V5], [EffNet-B4 (19M)], [1e-05], [90.9%], [pre-extracted faces (30/video), batch 16],
@@ -153,12 +153,26 @@ ResNet18 with lr=0.0002 and no regularization produced textbook *overfitting* : 
 
 Version 3 introduced a much richer pipeline: EfficientNet-B0, freeze/unfreeze, face extraction, mixup, label smoothing, and warmup. But a `return` inside a loop instead of after it caused only *one parameter* to unfreeze:
 
-```python
-# Bug: return INSIDE the loop    |  # Fix: return AFTER the loop
-for p in model.parameters():     |  for p in model.parameters():
-    p.requires_grad = True        |      p.requires_grad = True
-    return  # exits immediately!  |  return  # all params unfrozen
-```
+#grid(
+  columns: (1fr, 1fr),
+  gutter: 12pt,
+  [
+    *Buggy (V3):* `return` inside the loop
+    ```python
+    for p in model.parameters():
+        p.requires_grad = True
+        return  # exits after 1st!
+    ```
+  ],
+  [
+    *Fixed (V4):* `return` after the loop
+    ```python
+    for p in model.parameters():
+        p.requires_grad = True
+    return  # all params unfrozen
+    ```
+  ],
+)
 
 Version 3 showed train acc (68%) *below* val acc (73%) for all 50 epochs. The backbone was frozen the whole time, and the model could only learn with its tiny 2-layer classifier head. This single indentation error cost *20 hours of GPU*.
 
@@ -177,7 +191,7 @@ With EfficientNet-B0 (5.3M parameters) reaching its capacity ceiling at ~90%, th
 
 *Version 5 : The configuration trap.* Despite 3.6$times$ more parameters, Version 5 *regressed* to 88.8% test accuracy. Post-hoc analysis found four misconfigurations: wrong resolution (299 instead of B4's native 380), missing BN freeze flag in the SLURM script, no class weighting, and augmentations too aggressive. A larger model amplifies every configuration error.
 
-*Version 6 : Getting it right.* After fixing all V5 issues and aligning with the original paper's choices (native 380$times$380 resolution, class weights, face margin 1.3$times$, BN freeze), the model reached *92.08% validation accuracy*, our best result across all versions. An initial attempt with differential learning rates (backbone at 1/10th the classifier rate) caused training instability, but switching to a uniform learning rate of 3e-05 (proven stable in V4) resolved the issue.
+*Version 6 : Getting it right.* After fixing all V5 issues and aligning with the original paper's choices (native 380$times$380 resolution, class weights, face margin 1.3$times$, BN freeze), the model reached *92.08% validation accuracy*, our best result across all versions. An initial attempt with differential learning rates (backbone at 1/10th the classifier rate) caused training instability: the classifier adapted too fast relative to the backbone, creating a misalignment that made the model progressively forget what it had learned.
 
 #figure(
   image("results/v6/training_curves.png", width: 90%),
@@ -190,14 +204,28 @@ With EfficientNet-B0 (5.3M parameters) reaching its capacity ceiling at ~90%, th
 
 #figure(
   table(
-    columns: 7,
-    align: (left, center, center, center, center, center, center),
-    [*Version*], [*Model*], [*Params*], [*Val Acc*], [*Test Acc*], [*AUC*], [*F1*],
-    [V1], [ResNet18], [11M], [65.3%], [--], [--], [--],
-    [V3 (buggy)], [EffNet-B0], [5.3M], [73.8%], [71.6%], [0.720], [0.817],
-    [V4 (fixed)], [EffNet-B0], [5.3M], [89.7%], [*89.8%*], [*0.967*], [*0.920*],
-    [V5], [EffNet-B4], [19M], [90.9%], [88.8%], [0.939], [0.917],
-    [V6], [EffNet-B4], [19M], [*92.1%*], [89.4%], [0.959], [0.917],
+    columns: 8,
+    align: (left, left, center, center, center, center, center, center),
+    [*Version*], [*Model \ (params)*], [*Dropout*], [*Img/epoch*], [*Scheduler*], [*Freeze*], [*Mixup*], [*Class wt.*],
+    [V1], [ResNet18 \ (11M)], [0.5], [21,600], [ReduceLR], [No], [No], [No],
+    [V3], [EffNet-B0 \ (5.3M)], [0.5], [10,800], [Cosine], [5 ep.], [p=0.5], [No],
+    [V4], [EffNet-B0 \ (5.3M)], [0.5], [10,800], [ReduceLR], [5 ep.], [p=0.3], [No],
+    [V5], [EffNet-B4 \ (19M)], [0.5], [64,800], [ReduceLR], [5 ep.], [p=0.3], [No],
+    [V6], [EffNet-B4 \ (19M)], [0.4], [108,000], [ReduceLR], [4 ep.], [p=0.2], [Yes],
+  ),
+  caption: [Key hyperparameters per version. The progression shows how regularization techniques were gradually added and tuned.],
+)
+
+#figure(
+  table(
+    columns: 5,
+    align: (left, center, center, center, center),
+    [*Version*], [*Val Acc*], [*Test Acc*], [*AUC*], [*F1*],
+    [V1], [65.3%], [--], [--], [--],
+    [V3 (bug)], [73.8%], [71.6%], [0.720], [0.817],
+    [V4 (fixed)], [89.7%], [*89.8%*], [*0.967*], [*0.920*],
+    [V5], [90.9%], [88.8%], [0.939], [0.917],
+    [V6], [*92.1%*], [89.4%], [0.959], [0.917],
   ),
   caption: [Results across all training versions. V4 remains the best on test set AUC (0.967) despite using a 3.6$times$ smaller model than V6.],
 )
@@ -210,8 +238,8 @@ With EfficientNet-B0 (5.3M parameters) reaching its capacity ceiling at ~90%, th
     align: (left, center, center, center, center, center),
     [*Method*], [*V3*], [*V4*], [*V5*], [*V6*], [*DeepfakeBench*],
     [Deepfakes], [0.761], [*0.980*], [0.969], [0.973], [0.976],
-    [Face2Face], [0.722], [*0.971*], [0.944], [0.970], [0.976],
-    [FaceSwap], [0.685], [*0.968*], [0.929], [0.955], [0.980],
+    [Face2Face], [0.722], [0.971], [0.944], [0.970], [*0.976*],
+    [FaceSwap], [0.685], [0.968], [0.929], [0.955], [*0.980*],
     [NeuralTextures], [0.730], [*0.946*], [0.916], [0.937], [0.931],
     [*Global*], [0.720], [*0.967*], [0.939], [0.959], [0.957],
   ),
@@ -264,9 +292,6 @@ The images below illustrate the subtlety of these manipulations. Even on the sam
 )
 
 *Deepfakes* and *FaceSwap* replace the entire face, creating detectable boundaries where the synthetic face meets the original background. *Face2Face* transfers expressions but keeps the original identity, producing artifacts mainly around the jaw and mouth. *NeuralTextures* is the hardest because it only modifies a small region (typically the mouth area) using learned texture synthesis, leaving almost no spatial artifacts. The detector must rely on subtle statistical differences in pixel distributions rather than visible seams.
-
-This difficulty ranking is consistent across all our versions and matches both the original paper and DeepfakeBench, confirming it reflects intrinsic properties of the manipulation methods.
-
 == Example Predictions
 
 #figure(
@@ -297,15 +322,19 @@ The iterative process revealed three distinct failure patterns, each diagnosed t
 
 = Conclusion
 
-Starting from the FaceForensics++ codebase (which provided model architectures and data splits but no training pipeline), a complete deepfake detection system was built and iteratively refined over six training versions. The pipeline progressed from 65% validation accuracy (V1, ResNet18) to 92% (V6, EfficientNet-B4), with the best evaluated model (V4, EfficientNet-B0) achieving 0.9671 AUC, surpassing the DeepfakeBench reference of 0.9567 for EfficientNet-B4 despite using a 3.6$times$ smaller model.
+Starting from the FaceForensics++ codebase, a complete deepfake detection system was built and iteratively refined over six training versions. The pipeline progressed from 65% validation accuracy (V1, ResNet18) to 92% (V6, EfficientNet-B4), with the best evaluated model (V4, EfficientNet-B0) achieving 0.9671 AUC, surpassing the DeepfakeBench reference of 0.9567 for EfficientNet-B4 despite using a 3.6$times$ smaller model.
 
 Each version contributed a concrete lesson: V1 on learning rate sensitivity, V3 on the importance of unit testing critical operations, V4 on adaptive scheduling, V5 on the gap between code and configuration, and V6 on the importance of aligning with the reference paper's configuration choices while keeping the training dynamics simple.
 
-*Perspectives.* Three directions remain for future work: (1) obtaining a working XceptionNet checkpoint (the original hosting server's SSL certificate has expired) to compare with the paper's architecture directly; (2) ensemble methods combining B0 and B4 predictions; and (3) cross-dataset generalization, testing whether the detector trained on FF++ c23 transfers to other deepfake datasets (Celeb-DF, DFDC).
+== Perspectives
+
+Three directions remain for future work: (1) obtaining a working XceptionNet checkpoint (the original hosting server's SSL certificate has expired) to compare with the paper's architecture directly; (2) ensemble methods combining B0 and B4 predictions; and (3) cross-dataset generalization, testing whether the detector trained on FF++ c23 transfers to other deepfake datasets (Celeb-DF, DFDC).
 
 == AI Tools
 
-All architectural decisions, hyperparameter choices, experimental analysis, and report writing were carried out by me. AI (Claude) was used as a coding assistant for implementing the training pipeline, debugging SLURM scripts, and proofreading the report for grammar and clarity.
+All architectural decisions, hyperparameter choices, experimental analysis, and report writing were carried out by Maxence Guinziemba-Prokop. AI (Claude) was used as a coding assistant for implementing the training pipeline, debugging SLURM scripts, and proofreading the report for grammar and clarity.
+
+The complete source code is available at: #link("https://github.com/MaxenceGuinziemba/FaceForensics")
 
 = References
 
